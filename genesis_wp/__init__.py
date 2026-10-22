@@ -323,6 +323,10 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
                         datatype = info[KEY_DATATYPE]
                         scale = info[KEY_SCALE]
                         val = read_data[address]
+                        not_fitted = info.get(KEY_NOT_FITTED, {}).get(self._kind)
+                        if not_fitted is not None and val == not_fitted:
+                            raw_data[name] = None  # sensor not fitted
+                            continue
                         if datatype == TYPE_LONG:
                             regs = read_data[address : (address + 2)]
                             val = words_to_long(regs)

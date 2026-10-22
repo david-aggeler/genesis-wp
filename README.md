@@ -2,7 +2,11 @@
 
 A Python library and device emulator for heat pumps on the Thermia **Genesis** controller platform, over Modbus TCP: Thermia Diplomat Inverter, Mega and Calibra RXT, and the Stiebel Eltron WPE-I 07.1 Plus (internal WPM-G controller). Install it as `genesis-wp` and import it as `genesis_wp`.
 
-> **Work in progress (0.1.0.dev0).** Modbus I/O is async on Home Assistant's [`modbus-connection`](https://github.com/home-assistant-libs/modbus-connection), and the client is **read-only by default**. "Sensor not fitted" decoding and per-chunk failure isolation are being added.
+> **Work in progress (0.1.0.dev0).** Modbus I/O is async on Home Assistant's [`modbus-connection`](https://github.com/home-assistant-libs/modbus-connection), and the client is **read-only by default**. Per-chunk failure isolation is being added.
+
+### Sensors that are not fitted
+
+The Stiebel WPE-I reports an unwired sensor with a fixed raw value (20000 at scale 100, 2000 for the room sensor at scale 10), which would otherwise decode as 200.0 °C. For registers where the Stiebel documentation declares this value, the library reports `None` instead. Declarations are per model (`KEY_NOT_FITTED` in `genesis_wp/const.py`); other models keep reporting the number, because Thermia's documents declare no such value.
 
 ### Read-only by default
 
