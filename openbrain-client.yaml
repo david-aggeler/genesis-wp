@@ -1,0 +1,11 @@
+# Committed product truth for openbrain-client. No secrets.
+# Host-local connection details live in openbrain-client.local.yaml (gitignored).
+log:
+  retention_days: 365
+
+product: genesis-wp
+process: HELIX01
+
+placeholders:
+  build_command: [python, -m, pytest]
+  primary_language: "Python"
