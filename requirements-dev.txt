@@ -1,0 +1,11 @@
+# Development and test dependencies; installed into .venv by scripts/setup-as-user.sh.
+# Runtime dependencies live in setup.py.
+
+# Emulator server (pymodbus.simulator SimDevice/SimData need >= 3.12; HA 2026.10 ships 3.13.1)
+pymodbus>=3.13.1
+# Home Assistant's Modbus connection layer (HA 2026.10 ships 4.12.3)
+modbus-connection[pymodbus]>=4.12.3
+
+pytest
+pytest-asyncio
+pytest-cov
