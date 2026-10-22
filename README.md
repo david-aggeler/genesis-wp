@@ -2,7 +2,16 @@
 
 A Python library and device emulator for heat pumps on the Thermia **Genesis** controller platform, over Modbus TCP: Thermia Diplomat Inverter, Mega and Calibra RXT, and the Stiebel Eltron WPE-I 07.1 Plus (internal WPM-G controller). Install it as `genesis-wp` and import it as `genesis_wp`.
 
-> **Work in progress (0.1.0.dev0).** Modbus I/O is async on Home Assistant's [`modbus-connection`](https://github.com/home-assistant-libs/modbus-connection). Read-only-by-default writes, "sensor not fitted" decoding and per-chunk failure isolation are being added. Until then, `async_set` **writes to your heat pump without any guard**. Do not call it against a real plant unless you mean to.
+> **Work in progress (0.1.0.dev0).** Modbus I/O is async on Home Assistant's [`modbus-connection`](https://github.com/home-assistant-libs/modbus-connection), and the client is **read-only by default**. "Sensor not fitted" decoding and per-chunk failure isolation are being added.
+
+### Read-only by default
+
+A client refuses every write (`async_set`) with `GenesisReadOnlyError` before anything is sent to the heat pump. To write, construct it with `read_only=False`; the setting cannot be changed afterwards. Writes go straight to the controller of a real heating plant without any bounds check yet, so only opt in when you mean it.
+
+```python
+thermia = ThermiaGenesis(host, kind="stiebel_wpe_i_07_1", read_only=False)
+await thermia.async_set("holding_comfort_wheel_setting", 21.0)
+```
 
 The heat pump serves Modbus TCP directly. Set BMC to Modbus TCP on your heat pump (Thermia), or connect to the display unit's Ethernet port (Stiebel WPE-I).
 

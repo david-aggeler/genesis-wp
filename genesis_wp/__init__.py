@@ -41,6 +41,10 @@ class ThermiaConnectionError(ThermiaException):
     pass
 
 
+class GenesisReadOnlyError(ThermiaException):
+    """A write was attempted on a client constructed without ``read_only=False``."""
+
+
 def num_to_bin(value):
     if value > -1:
         return value
@@ -60,10 +64,13 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
     ``host`` (and ``port``, ``unit_id``) and the client opens and owns its own
     connection, or pass ``unit``, a ``modbus_connection.ModbusUnit`` on a connection the
     caller owns (for example Home Assistant's shared connection).
+
+    The client is read-only unless constructed with ``read_only=False``: every write
+    raises :class:`GenesisReadOnlyError` before anything is sent to the device.
     """
 
     def __init__(self, host=None, port=502, kind="inverter", delay=0.1, max_registers=16, unit_id=1,
-                 *, unit: ModbusUnit | None = None, timeout=DEFAULT_TIMEOUT):
+                 *, unit: ModbusUnit | None = None, timeout=DEFAULT_TIMEOUT, read_only=True):
         """Initialize."""
 
         if (host is None) == (unit is None):
@@ -73,6 +80,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         if normalized_kind not in REGISTER_RANGES:
             raise ValueError(f'Unsupported heat pump model: {kind}')
         kind = normalized_kind
+        self._read_only = bool(read_only)
         self._unit = unit
         self._connection = None  # our own connection, created lazily; None for an injected unit
         self._unit_id = unit_id
@@ -84,6 +92,11 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         self._kind = kind
         self._delay = delay
         self.MAX_REGISTERS = max_registers
+
+    @property
+    def read_only(self) -> bool:
+        """True unless the client was constructed with ``read_only=False``; fixed for its lifetime."""
+        return self._read_only
 
     async def _ensure_unit(self) -> ModbusUnit:
         """Return the unit to talk to, connecting our own connection if we own one."""
@@ -175,6 +188,11 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         return bool(self.data)
 
     async def _set_data(self, register, value):
+        # The only path that issues Modbus writes (FC5/6). Refuse before connecting or sending.
+        if self._read_only:
+            raise GenesisReadOnlyError(
+                f"refusing to write {register}: client is read-only (construct with read_only=False to allow writes)"
+            )
         meta = REGISTERS[register]
         regtype = meta[KEY_REG_TYPE]
         address = meta[KEY_ADDRESS]

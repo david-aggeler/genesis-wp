@@ -18,7 +18,8 @@ async def main():
 
     # argument kind: inverter - for Diplomat Inverter
     #                mega     - for Mega
-    thermia = ThermiaGenesis(host, port=port, kind=kind)
+    # Writes go to a real heat pump: the client is read-only unless you opt in explicitly.
+    thermia = ThermiaGenesis(host, port=port, kind=kind, read_only=False)
     try:
         await thermia.async_set(ATTR_HOLDING_COMFORT_WHEEL_SETTING, 21.0)
         #await thermia.async_set(ATTR_COIL_ENABLE_TAP_WATER, False)
