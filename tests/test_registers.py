@@ -1,7 +1,7 @@
 """WPE-I model covers the doc- and probe-verified registers (requirement-5, ac-12).
 
-Inputs 2 (status bits) and 30 (calculated demand) are still missing: neither firmware
-capture read them (see change_request-8, open data gap).
+Inputs 2 (status bits) and 30 (calculated demand) come from separate read-only captures
+recorded as profile supplements (6.1.5: 2026-10-22 22:20; 6.0.6: owner's read 2026-10-18).
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import pytest
 
 from genesis_wp.const import MODEL_STIEBEL_WPE_I_071, REGISTERS
 
-from .harness import ADDED_WPE_I_REGISTERS, PROFILES, library_full_update
+from .harness import ADDED_WPE_I_REGISTERS, PROFILE_615, PROFILES, decode_raw, library_full_update
 
 KSM = [f"dinput_ksm_{suffix}" for suffix in (
     "internal_error_1", "internal_error_2", "fan_test_pressure_sensor_before_start",
@@ -25,15 +25,13 @@ def test_added_registers_are_enabled_for_the_wpe_i():
         assert REGISTERS[name][MODEL_STIEBEL_WPE_I_071], name
 
 
-# DHF-REQ: genesis-wp/requirement-5  DHF-TEST: genesis-wp/ac-12 (KSM, 413, 57-59; inputs 2 and 30 pending)
+# DHF-REQ: genesis-wp/requirement-5  DHF-TEST: genesis-wp/ac-12
 @pytest.mark.parametrize("profile", PROFILES)
 async def test_wpe_i_update_reads_the_added_registers(start_emulator, profile):
     emu = await start_emulator(profile)
     data = await library_full_update(emu)
     for name, (block, address) in ADDED_WPE_I_REGISTERS.items():
-        raw = emu.profile.blocks[block].value(address)
-        expected = bool(raw) if block == "discrete_inputs" else raw
-        assert data[name] == expected, name
+        assert data[name] == decode_raw(name, emu.profile.blocks[block].value(address)), name
     assert [r for r in emu.requests if r.rejected] == []
 
 
@@ -43,3 +41,32 @@ async def test_controller_version_is_inputs_57_to_59(start_emulator, profile):
     data = await library_full_update(emu)
     version = ".".join(str(data[f"input_software_version_{p}"]) for p in ("major", "minor", "micro"))
     assert version == emu.profile.firmware["controller"]  # 17.2.40 / 17.3.145
+
+
+async def test_status_bits_and_demand_on_6_1_5(start_emulator):
+    """Read 2026-10-22 22:20: operating state Heat (4), status bit 3 'heat' (8), demand 0.71."""
+    emu = await start_emulator(PROFILE_615)
+    data = await library_full_update(emu)
+    assert data["input_status_bits"] == 8
+    assert data["input_calculated_heating_demand"] == 0.71
+
+
+async def test_input_30_is_read_alone(start_emulator):
+    """Inputs 31-35 are not in the Stiebel document: input 30 gets its own request."""
+    emu = await start_emulator(PROFILE_615)
+    await library_full_update(emu)
+    reads = [(r.function_code, r.address, r.count) for r in emu.requests]
+    assert (4, 30, 1) in reads
+    assert not [r for r in reads if r[0] == 4 and r[1] <= 31 and r[1] + r[2] - 1 >= 31 and r[1] != 31]
+    assert not [r for r in reads if r[0] == 4 and 31 <= r[1] <= 35]
+
+
+# DHF-REQ: genesis-wp/requirement-5  DHF-TEST: genesis-wp/ac-13
+def test_holding_307_308_311_312_are_mega_only_at_thermia_scale():
+    from genesis_wp.const import KEY_ADDRESS, KEY_REG_TYPE, KEY_SCALE, MODEL_MEGA, REG_HOLDING
+
+    entries = {m[KEY_ADDRESS]: m for m in REGISTERS.values() if m[KEY_REG_TYPE] == REG_HOLDING and m[KEY_ADDRESS] in (307, 308, 311, 312)}
+    assert set(entries) == {307, 308, 311, 312}
+    for address, meta in entries.items():
+        assert meta[KEY_SCALE] == 100, address
+        assert meta[MODEL_MEGA] and not meta[MODEL_STIEBEL_WPE_I_071], address

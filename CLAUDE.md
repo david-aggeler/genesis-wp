@@ -208,6 +208,7 @@ This file names commands only by intent. Arguments, flags and exit codes come fr
 - Shared harness: `tests/harness.py` (profiles, expected values, `library_full_update`) and the `start_emulator` / `connect` fixtures. `tests/test_library_against_emulator.py` is the regression net every transport or decoding change must keep green.
 - Fixtures are firmware-profile snapshots captured by read-only probes, one per controller software / Genesis version (currently 6.0.6 / 17.2.40 and 6.1.5 / 17.3.145). Each fixture records its source and capture date, and carries no serial number.
 - A new firmware on the device means a new profile, captured by a read-only probe and diffed against the previous one. Never edit an existing profile in place to make a test pass.
+- Values from a later, separate read-only read go into `scripts/probe_supplements/<profile>.json` (with capture time and method) and are merged by `scripts/probe_to_profile.py --supplement`. The probe's own 35 requests are frozen in the converter (`PROBE_READS`), so a profile's ranges never depend on the library's current read plan.
 
 ## Code conventions
 

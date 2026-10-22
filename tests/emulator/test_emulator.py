@@ -49,8 +49,8 @@ async def test_serves_every_profile_value(start_emulator, connect):
 async def test_unimplemented_address_gets_illegal_data_address(start_emulator, connect):
     emu = await start_emulator()
     client = await connect(emu)
-    # One address outside every range per block (input 2 and 30 are not in the 6.1.5 capture).
-    for block, address in ((COILS, 15), (DISCRETE_INPUTS, 61), (HOLDING_REGISTERS, 116), (INPUT_REGISTERS, 2)):
+    # One address outside every range per block (input 3 sits between the answered 1-2 and 4-26).
+    for block, address in ((COILS, 15), (DISCRETE_INPUTS, 61), (HOLDING_REGISTERS, 116), (INPUT_REGISTERS, 3)):
         response = await read(client, block, address)
         assert response.isError(), f"{block} {address}"
         assert response.exception_code == ExcCodes.ILLEGAL_ADDRESS

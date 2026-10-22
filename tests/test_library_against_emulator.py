@@ -12,10 +12,12 @@ import pytest
 from .harness import PROFILES, expected_library_values, library_full_update
 
 # What the inherited library sent to the real unit during the probes (max_registers=16),
-# plus the reads change_request-8 added for the WPE-I: discrete inputs 247-254 (KSM) and
-# input 413 (fan test). Inputs 57-59 fit into an existing read.
+# plus the reads change_request-8 added for the WPE-I: discrete inputs 247-254 (KSM),
+# input 413 (fan test) and input 30 (demand, read alone). The input-1 read widens to 1-2
+# (status bits); inputs 57-59 fit into an existing read.
 PROBE_REQUESTS = 35
-ADDED_REQUESTS = [(2, 247, 8), (4, 413, 1)]
+ADDED_REQUESTS = [(2, 247, 8), (4, 413, 1), (4, 30, 1)]
+WIDENED_REQUESTS = [(4, 1, 2)]  # was (4, 1, 1)
 EXPECTED_REQUESTS = PROBE_REQUESTS + len(ADDED_REQUESTS)
 
 
@@ -33,8 +35,9 @@ async def test_full_update_makes_the_probe_requests_and_nothing_is_rejected(star
     emu = await start_emulator(profile)
     await library_full_update(emu)
     assert len(emu.requests) == EXPECTED_REQUESTS
-    for added in ADDED_REQUESTS:
-        assert added in [(r.function_code, r.address, r.count) for r in emu.requests]
+    reads = [(r.function_code, r.address, r.count) for r in emu.requests]
+    for expected in ADDED_REQUESTS + WIDENED_REQUESTS:
+        assert expected in reads
     assert [r for r in emu.requests if r.rejected] == []
     assert all(r.function_code in (1, 2, 3, 4) for r in emu.requests)
 

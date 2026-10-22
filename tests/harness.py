@@ -36,7 +36,7 @@ NOT_FITTED_ON_UNIT = frozenset({
 
 
 # Registers added to the WPE-I model after the capture (change_request-8): name -> (block, address).
-# Expected values come from the profile's raw values (all scale 1; bits as bool).
+# Expected values are the profile's raw values decoded with the register's scale and sign.
 ADDED_WPE_I_REGISTERS = {
     "dinput_ksm_internal_error_1": ("discrete_inputs", 247),
     "dinput_ksm_internal_error_2": ("discrete_inputs", 248),
@@ -50,6 +50,8 @@ ADDED_WPE_I_REGISTERS = {
     "input_software_version_major": ("input_registers", 57),
     "input_software_version_minor": ("input_registers", 58),
     "input_software_version_micro": ("input_registers", 59),
+    "input_status_bits": ("input_registers", 2),
+    "input_calculated_heating_demand": ("input_registers", 30),
 }
 
 
@@ -68,9 +70,20 @@ def expected_library_values(profile: str) -> dict:
 
     blocks = get_profile(profile).blocks
     for name, (block, address) in ADDED_WPE_I_REGISTERS.items():
-        raw = blocks[block].value(address)
-        expected[name] = bool(raw) if block == "discrete_inputs" else raw
+        expected[name] = decode_raw(name, blocks[block].value(address))
     return expected
+
+
+def decode_raw(name: str, raw: int):
+    """Reference decoding of one raw value for a register (bit, scale, int16 sign)."""
+    from genesis_wp.const import KEY_DATATYPE, KEY_SCALE, REGISTERS, TYPE_BIT, TYPE_INT
+
+    meta = REGISTERS[name]
+    if meta[KEY_DATATYPE] == TYPE_BIT:
+        return bool(raw)
+    if meta[KEY_DATATYPE] == TYPE_INT and raw >= 0x8000:
+        raw -= 0x10000
+    return raw / meta[KEY_SCALE] if meta[KEY_SCALE] != 1 else raw
 
 
 async def library_full_update(emu: Emulator) -> dict:

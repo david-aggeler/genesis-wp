@@ -1,0 +1,7 @@
+{
+ "captured": "2026-10-18",
+ "method": "owner's own read-only read on firmware 6.0.6 (homelab register map, verified 2026-10-18, compressor idle); a separate capture from the profile's 2026-10-22 snapshot, not the same instant",
+ "values": {
+  "input_registers": {"2": 1024, "30": 65508}
+ }
+}

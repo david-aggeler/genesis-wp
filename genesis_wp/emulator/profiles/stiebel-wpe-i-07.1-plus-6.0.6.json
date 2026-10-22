@@ -15,7 +15,8 @@
    "addresses inside ranges without a value were read but not kept; the emulator serves 0",
    "holding 116 was not read (library skips it while coil 41 is off)",
    "inputs 57-59 (controller version) from a raw follow-up read and the display",
-   "int registers decoded as 0 may have been raw 32767 (library maps 32767 to 0)"
+   "int registers decoded as 0 may have been raw 32767 (library maps 32767 to 0)",
+   "supplement 2026-10-18: input_registers 2, 30 (owner's own read-only read on firmware 6.0.6 (homelab register map, verified 2026-10-18, compressor idle); a separate capture from the profile's 2026-10-22 snapshot, not the same instant)"
   ]
  },
  "blocks": {
@@ -296,11 +297,15 @@
    "ranges": [
     [
      1,
-     1
+     2
     ],
     [
      4,
      26
+    ],
+    [
+     30,
+     30
     ],
     [
      36,
@@ -333,6 +338,7 @@
    ],
    "values": {
     "1": 4,
+    "2": 1024,
     "4": 1200,
     "5": 1398,
     "6": 0,
@@ -355,6 +361,7 @@
     "24": 65036,
     "25": 64036,
     "26": 63036,
+    "30": 65508,
     "36": 65386,
     "39": 3617,
     "40": 2655,

@@ -1,0 +1,7 @@
+{
+ "captured": "2026-10-22T22:20:03+02:00",
+ "method": "owner-approved read-only FC4 reads (pyModbusTCP 0.1.10, write methods stubbed), unit 1, firmware 6.1.5; read about 2.5 h after the profile's main capture, not the same instant",
+ "values": {
+  "input_registers": {"2": 8, "30": 71, "31": 20000, "32": 20000, "33": 10000, "34": 0, "35": 0}
+ }
+}

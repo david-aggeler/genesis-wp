@@ -9,9 +9,9 @@ real heat pump and saved:
 
 This script turns that into a profile (see ``genesis_wp/emulator/profile.py``):
 
-- **ranges**: the address spans the unit answered without a Modbus exception. These are
-  the library's own read chunks, recomputed by replaying its chunking against a stub
-  client, plus the spans of the extra raw reads.
+- **ranges**: the address spans the unit answered without a Modbus exception: the
+  probe's own read requests (frozen in ``PROBE_READS``), the extra raw reads, and any
+  supplements from later read-only captures.
 - **values**: raw register values. Decoded library values are converted back to raw
   (scale, int16 two's complement, 32-bit word order, status enum); extra reads are
   already raw.
@@ -29,12 +29,10 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import sys
 from pathlib import Path
 
-from genesis_wp import ThermiaGenesis
 from genesis_wp.const import (
     KEY_ADDRESS,
     KEY_DATATYPE,
@@ -113,48 +111,27 @@ DYNAMICS = {
 }
 
 
-class _ChunkRecorder:
-    """Stand-in for pyModbusTCP.ModbusClient that records read spans and returns zeros."""
-
-    def __init__(self) -> None:
-        self.spans: dict[str, list[tuple[int, int]]] = {b: [] for b in BLOCK_OF.values()}
-
-    def is_open(self) -> bool:
-        return True
-
-    def open(self) -> bool:
-        return True
-
-    def close(self) -> None:
-        pass
-
-    def last_error(self) -> int:
-        return 0
-
-    def _record(self, block: str, start: int, length: int, fill):
-        self.spans[block].append((start, start + length - 1))
-        return [fill] * length
-
-    def read_coils(self, start, length):
-        return self._record("coils", start, length, False)
-
-    def read_discrete_inputs(self, start, length):
-        return self._record("discrete_inputs", start, length, False)
-
-    def read_input_registers(self, start, length):
-        return self._record("input_registers", start, length, 0)
-
-    def read_holding_registers(self, start, length):
-        return self._record("holding_registers", start, length, 0)
+# The 35 read requests the probe actually sent (pythermiagenesis17 v0.3.0, model
+# stiebel_wpe_i_07_1, max_registers=16), as (function code, start, count). All answered
+# without exception on both firmwares. Frozen here because the library's own read plan
+# changes over time; the capture does not.
+PROBE_READS = [
+    (1, 3, 12), (1, 20, 16), (1, 37, 6),
+    (2, 0, 4), (2, 9, 8), (2, 22, 15), (2, 47, 14), (2, 66, 14), (2, 83, 4), (2, 199, 13), (2, 218, 8), (2, 235, 12),
+    (4, 1, 1), (4, 4, 16), (4, 20, 7), (4, 36, 16), (4, 52, 16), (4, 68, 17), (4, 106, 16), (4, 122, 16), (4, 139, 9),
+    (4, 160, 4), (4, 157, 2), (4, 311, 9),
+    (3, 0, 13), (3, 16, 1), (3, 22, 9), (3, 49, 2), (3, 58, 13), (3, 75, 14), (3, 105, 11), (3, 299, 6), (3, 117, 9),
+    (3, 298, 1), (3, 321, 1),
+]
+FUNCTION_BLOCK = {1: "coils", 2: "discrete_inputs", 3: "holding_registers", 4: "input_registers"}
 
 
-def library_read_spans() -> dict[str, list[tuple[int, int]]]:
-    """Replay the library's chunking for the WPE-I model and return the spans it reads."""
-    hp = ThermiaGenesis("127.0.0.1", kind=KIND, delay=0, max_registers=MAX_REGISTERS)
-    recorder = _ChunkRecorder()
-    hp._client = recorder  # noqa: SLF001 - replay only, never connects
-    asyncio.run(hp.async_update())
-    return recorder.spans
+def probe_read_spans() -> dict[str, list[tuple[int, int]]]:
+    """Address spans of the probe's own requests, per block."""
+    spans: dict[str, list[tuple[int, int]]] = {b: [] for b in BLOCK_OF.values()}
+    for function_code, start, count in PROBE_READS:
+        spans[FUNCTION_BLOCK[function_code]].append((start, start + count - 1))
+    return spans
 
 
 def merge(spans: list[tuple[int, int]]) -> list[list[int]]:
@@ -190,7 +167,24 @@ def to_raw(name: str, value) -> dict[int, int]:
     raise ValueError(f"{name}: unsupported datatype {datatype}")
 
 
-def convert(probe_dir: Path, software: str, controller: str, captured: str) -> dict:
+def apply_supplement(path: Path, values: dict, spans: dict) -> str:
+    """Merge raw values from a later, separate read-only capture; returns a provenance note.
+
+    A supplement only fills addresses the main capture did not read; a conflict aborts.
+    """
+    supplement = json.loads(path.read_text())
+    for block, entries in supplement["values"].items():
+        for address, raw in entries.items():
+            address = int(address)
+            if address in values[block]:
+                sys.exit(f"error: supplement {path.name} overrides captured {block} {address}")
+            values[block][address] = int(raw)
+            spans[block].append((address, address))
+    listed = ", ".join(f"{b} {', '.join(sorted(e, key=int))}" for b, e in supplement["values"].items())
+    return f"supplement {supplement['captured']}: {listed} ({supplement['method']})"
+
+
+def convert(probe_dir: Path, software: str, controller: str, captured: str, supplements: list[Path] = ()) -> dict:
     summary = json.loads((probe_dir / "summary.json").read_text())
     unknown = set(summary) - SUMMARY_FIELDS
     if unknown:
@@ -208,7 +202,7 @@ def convert(probe_dir: Path, software: str, controller: str, captured: str) -> d
         block = BLOCK_OF[REGISTERS[name][KEY_REG_TYPE]]
         values[block].update(to_raw(name, value))
 
-    spans = library_read_spans()
+    spans = probe_read_spans()
     for label, (block, first) in EXTRAS.items():
         extra = summary["extras"][label]
         if extra.get("error") or extra.get("except"):
@@ -227,6 +221,8 @@ def convert(probe_dir: Path, software: str, controller: str, captured: str) -> d
     # display ("Steuerung"). Inside the library's input span, but not a library register.
     for offset, part in enumerate(controller.split(".")):
         values["input_registers"][57 + offset] = int(part)
+
+    supplement_notes = [apply_supplement(path, values, spans) for path in supplements]
 
     blocks = {}
     for block in BLOCK_OF.values():
@@ -275,6 +271,7 @@ def convert(probe_dir: Path, software: str, controller: str, captured: str) -> d
                 "holding 116 was not read (library skips it while coil 41 is off)",
                 "inputs 57-59 (controller version) from a raw follow-up read and the display",
                 "int registers decoded as 0 may have been raw 32767 (library maps 32767 to 0)",
+                *supplement_notes,
             ],
         },
         "blocks": blocks,
@@ -289,9 +286,11 @@ def main() -> None:
     parser.add_argument("--controller", required=True, help="Genesis controller version, e.g. 17.3.145")
     parser.add_argument("--captured", required=True, help="capture date, YYYY-MM-DD")
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--supplement", type=Path, action="append", default=[],
+                        help="JSON with raw values from a later read-only capture (repeatable)")
     args = parser.parse_args()
 
-    profile = convert(args.probe_dir, args.software, args.controller, args.captured)
+    profile = convert(args.probe_dir, args.software, args.controller, args.captured, args.supplement)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(profile, indent=1) + "\n")
     counts = {b: len(d["values"]) for b, d in profile["blocks"].items()}
