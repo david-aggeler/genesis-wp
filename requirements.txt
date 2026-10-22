@@ -1,1 +1,1 @@
-pyModbusTCP==0.1.10
+modbus-connection[pymodbus]>=4.12.3,<5

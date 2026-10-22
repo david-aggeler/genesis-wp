@@ -7,7 +7,6 @@ decoded from the real unit during the 2026-10-22 read-only probes.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -31,14 +30,13 @@ def expected_library_values(profile: str) -> dict:
 async def library_full_update(emu: Emulator) -> dict:
     """Run a full WPE-I update of the genesis_wp library against an emulator.
 
-    The library's transport is still synchronous (pyModbusTCP), so the update runs in
-    a worker thread while the emulator serves on this event loop. The async transport
-    change replaces this body; callers stay the same.
+    The library is async on modbus-connection, so the update runs on the same event
+    loop as the emulator.
     """
     from genesis_wp import ThermiaGenesis
 
-    def update():
-        client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, max_registers=16)
-        return asyncio.run(client.async_update())
-
-    return await asyncio.to_thread(update)
+    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, max_registers=16)
+    try:
+        return await client.async_update()
+    finally:
+        await client.close()

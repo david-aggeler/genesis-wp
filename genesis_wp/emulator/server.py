@@ -107,6 +107,8 @@ class Emulator:
 
     requests: list[Request] = field(default_factory=list, init=False)
     faults: list[Fault] = field(default_factory=list, init=False)
+    #: TCP connections accepted since start.
+    connections: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
         self._rng = random.Random(self.seed)
@@ -152,6 +154,7 @@ class Emulator:
             self._build_device(),
             address=(self.host, self.port),
             trace_pdu=self._trace_pdu,
+            trace_connect=self._trace_connect,
         )
         await self._server.serve_forever(background=True)
         if self.dynamics and self.dynamics_interval > 0:
@@ -217,6 +220,10 @@ class Emulator:
         while True:
             await asyncio.sleep(self.dynamics_interval)
             self.step()
+
+    def _trace_connect(self, connecting: bool) -> None:
+        if connecting:
+            self.connections += 1
 
     # ---- request gate -------------------------------------------------------------
 

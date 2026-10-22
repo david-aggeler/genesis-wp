@@ -8,19 +8,22 @@ import datetime
 import asyncio
 import traceback
 
-from time import sleep
-
 from datetime import timedelta
 from operator import itemgetter, attrgetter
-import logging
 
-from pyModbusTCP.client import ModbusClient
-from pyModbusTCP.utils import *
+from modbus_connection import (
+    ModbusConnectionError,
+    ModbusTcpParams,
+    ModbusTimeoutError,
+    ModbusUnit,
+)
 
 from .const import *
-from struct import unpack
 
 _LOGGER = logging.getLogger(__name__)
+
+# Seconds per Modbus request when the client opens its own connection.
+DEFAULT_TIMEOUT = 5.0
 
 
 class ThermiaException(Exception):
@@ -44,18 +47,36 @@ def num_to_bin(value):
     return 65536 + value
 
 
-class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
-    """Main class to perform modbus requests to heat pump."""
+def words_to_long(words, big_endian=True):
+    """Combine two 16-bit registers into one unsigned 32-bit value."""
+    high, low = (words[0], words[1]) if big_endian else (words[1], words[0])
+    return (high << 16) | low
 
-    def __init__(self, host, port=502, kind="inverter", delay=0.1, max_registers=16, unit_id=1):
+
+class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
+    """Main class to perform modbus requests to heat pump.
+
+    All Modbus I/O goes through Home Assistant's ``modbus-connection``. Either pass
+    ``host`` (and ``port``, ``unit_id``) and the client opens and owns its own
+    connection, or pass ``unit``, a ``modbus_connection.ModbusUnit`` on a connection the
+    caller owns (for example Home Assistant's shared connection).
+    """
+
+    def __init__(self, host=None, port=502, kind="inverter", delay=0.1, max_registers=16, unit_id=1,
+                 *, unit: ModbusUnit | None = None, timeout=DEFAULT_TIMEOUT):
         """Initialize."""
 
+        if (host is None) == (unit is None):
+            raise ValueError("pass either host or unit, not both and not neither")
         self.data = {}
         normalized_kind = MODEL_ALIASES.get(str(kind).strip().lower(), kind)
         if normalized_kind not in REGISTER_RANGES:
             raise ValueError(f'Unsupported heat pump model: {kind}')
         kind = normalized_kind
-        self._client = ModbusClient(host, port=port, unit_id=unit_id, auto_open=True)
+        self._unit = unit
+        self._connection = None  # our own connection, created lazily; None for an injected unit
+        self._unit_id = unit_id
+        self._timeout = timeout
         self.firmware = None
         self.model = MODEL_NAMES[kind]
         self._host = host
@@ -64,25 +85,44 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         self._delay = delay
         self.MAX_REGISTERS = max_registers
 
+    async def _ensure_unit(self) -> ModbusUnit:
+        """Return the unit to talk to, connecting our own connection if we own one."""
+        if self._unit is not None and self._connection is None:
+            return self._unit  # injected: the caller owns the connection
+        if self._connection is None:
+            from modbus_connection.pymodbus import ModbusConnection
+
+            self._connection = ModbusConnection(
+                ModbusTcpParams(host=self._host, port=self._port), timeout=self._timeout
+            )
+            self._unit = self._connection.for_unit(self._unit_id)
+        if not self._connection.connected:
+            _LOGGER.info("Opening a Modbus TCP connection to %s:%s", self._host, self._port)
+            try:
+                await self._connection.connect()
+            except (ModbusConnectionError, ModbusTimeoutError, OSError) as err:
+                raise ThermiaConnectionError(
+                    f"Failed to connect to {self._host}:{self._port}"
+                ) from err
+        return self._unit
+
+    async def close(self):
+        """Close the connection this client opened itself; an injected unit is left alone."""
+        if self._connection is not None:
+            await self._connection.close()
+            self._connection = None
+            self._unit = None
+
     async def async_set(self, register, value):  # pylint:disable=too-many-branches
         """Write data to heat pump."""
         ret_value = await self._set_data(register, value)
-        self._client.close()
+        return ret_value
 
     async def async_update(
         self, register_types=REG_TYPES, only_registers=None
     ):  # pylint:disable=too-many-branches
         """Update data from heat pump."""
-        if not self._client.is_open():
-            _LOGGER.info(
-                "Attempting to open a Modbus TCP connection to %s:%s",
-                self._host,
-                self._port,
-            )
-            if not self._client.open():
-                raise ThermiaConnectionError(
-                    f"Failed to connect to {self._host}:{self._port}"
-                )
+        await self._ensure_unit()
         use_registers = []
         if only_registers != None:
             # Make sure to sort registers by type and address
@@ -98,7 +138,6 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             ).keys()
 
         raw_data = await self._get_data(use_registers)
-        self._client.close()
 
         if not raw_data:
             self.data = {}
@@ -141,16 +180,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         address = meta[KEY_ADDRESS]
         scale = meta[KEY_SCALE]
 
-        if not self._client.is_open():
-            _LOGGER.info(
-                "Attempting to open a Modbus TCP connection to %s:%s",
-                self._host,
-                self._port,
-            )
-            if not self._client.open():
-                raise ThermiaConnectionError(
-                    f"Failed to connect to {self._host}:{self._port}"
-                )
+        unit = await self._ensure_unit()
 
         await asyncio.sleep(self._delay)
         try:
@@ -158,7 +188,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
                 _LOGGER.debug(
                     f"Set {regtype} register at {address} value {value} ({value})"
                 )
-                self._client.write_single_coil(address, value)
+                await unit.write_coil(address, bool(value))
             elif regtype == REG_HOLDING:
                 converted_value = int(value * scale)
                 if meta[KEY_DATATYPE] == TYPE_INT:
@@ -166,7 +196,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
                 _LOGGER.debug(
                     f"Set {regtype} register at {address} value {converted_value} ({value}) {scale}"
                 )
-                self._client.write_single_register(address, converted_value)
+                await unit.write_register(address, converted_value)
             else:
                 raise "This register can not be changed"
         except Exception as e:
@@ -250,6 +280,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             f"Will make {len(chunks)} requests to read {len(registers)} registers"
         )
 
+        unit = await self._ensure_unit()
         try:
             for chunk in chunks:
                 await asyncio.sleep(self._delay)
@@ -259,13 +290,13 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
                 _LOGGER.debug(f"Reading {regtype} {start_address} length {length}")
                 read_data = None
                 if regtype == REG_COIL:
-                    read_data = self._client.read_coils(start_address, length)
+                    read_data = await unit.read_coils(start_address, length)
                 elif regtype == REG_DISCRETE_INPUT:
-                    read_data = self._client.read_discrete_inputs(start_address, length)
+                    read_data = await unit.read_discrete_inputs(start_address, length)
                 elif regtype == REG_INPUT:
-                    read_data = self._client.read_input_registers(start_address, length)
+                    read_data = await unit.read_input_registers(start_address, length)
                 elif regtype == REG_HOLDING:
-                    read_data = self._client.read_holding_registers(
+                    read_data = await unit.read_holding_registers(
                         start_address, length
                     )
                 if read_data:
@@ -276,10 +307,10 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
                         val = read_data[address]
                         if datatype == TYPE_LONG:
                             regs = read_data[address : (address + 2)]
-                            val = word_list_to_long(regs)[0]
+                            val = words_to_long(regs)
                         elif datatype == TYPE_LONG_LE:
                             regs = read_data[address : (address + 2)]
-                            val = word_list_to_long(regs, False)[0]
+                            val = words_to_long(regs, False)
                         elif datatype == TYPE_INT:
                             if val == 32767:
                                 val = 0
@@ -311,11 +342,8 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
                             val = val / scale
                         raw_data[name] = val
                 else:
-                    if self._client.last_error() > 0:
-                        _LOGGER.error(f"error {self._client.last_error()}")
                     raise Exception(
-                        f"Failed to read {regtype} {start_address} length {length}",
-                        self._client.last_error(),
+                        f"Failed to read {regtype} {start_address} length {length}: empty response"
                     )
             # for regtype in register_types:
             #    last_chunk_address = 0
@@ -345,6 +373,9 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             #            raise Exception(f"Failed to read {regtype} {start_address} length {length}", self._client.last_error())
             #        last_chunk_address = chunk[1]
             #    raw_data[regtype] = values
+        except (ModbusConnectionError, ModbusTimeoutError) as err:
+            # A lost link or timeout fails the whole update; chunk isolation does not apply.
+            raise ThermiaConnectionError(f"Modbus connection failed: {err}") from err
         except Exception as e:
             _LOGGER.error(f"exception: {e}")
             print(traceback.format_exc())

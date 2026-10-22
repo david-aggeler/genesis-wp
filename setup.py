@@ -16,8 +16,9 @@ setup(
     license="MIT",
     packages=["genesis_wp", "genesis_wp.emulator"],
     package_data={"genesis_wp.emulator": ["profiles/*.json"]},
-    python_requires=">=3.6",
-    install_requires=["pymodbustcp==0.1.10"],
+    python_requires=">=3.12",
+    # Home Assistant's Modbus connection layer (HA 2026.10 ships 4.12.3); pymodbus backend via its extra.
+    install_requires=["modbus-connection[pymodbus]>=4.12.3,<5"],
     extras_require={
         # The emulator is a pymodbus server (SimDevice/SimData need >= 3.12; HA 2026.10 ships 3.13.1).
         "emulator": ["pymodbus>=3.13.1"],

@@ -10,7 +10,7 @@ Rules for coding agents in this repo. Short and blunt on purpose.
 - **Never send Modbus function codes 5, 6, 15 or 16 to the real device**: not from tests, not from a probe, not "just once to check".
 - Exercise write paths **only against the emulator** (`genesis_wp.emulator`) or the pymodbus simulator on the local host.
 - Live reads (function codes 1–4) are allowed only as an explicit, owner-approved probe that captures fixtures. Guard the probe script so every write method raises before it connects.
-- Use the device host name in lower case (the old pyModbusTCP transport rejects upper-case). The name is topology: keep it out of committed files, records and logs, and pass it in through the environment.
+- The device host name is topology: keep it out of committed files, records and logs, and pass it in through the environment.
 - The test suite never needs the real device. If a test seems to need it, the emulator is missing a feature; extend the emulator.
 
 ## Conceptional
@@ -227,5 +227,5 @@ This file names commands only by intent. Arguments, flags and exit codes come fr
 - `openbrain-client.yaml` — committed product truth for `openbrain-client` (product, process, placeholders).
 - `genesis_wp/__init__.py`, `genesis_wp/const.py` — the library (inherited from pythermiagenesis17; `const.py` keeps upstream's layout and register names so fixes stay portable).
 - `genesis_wp/emulator/` — Modbus TCP emulator and firmware profiles; `scripts/probe_to_profile.py` converts read-only probe captures into profiles.
-- `setup.py`, `requirements.txt` — packaging (inherited, still pyModbusTCP until the transport CR lands).
+- `setup.py`, `requirements.txt` — packaging; runtime dependency is `modbus-connection[pymodbus]` only, the emulator's pymodbus sits in the `emulator` extra.
 - `.github/workflows/python-publish.yml` — PyPI upload on GitHub release; see *The gate*.

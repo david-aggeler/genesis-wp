@@ -74,3 +74,18 @@ def test_no_manufacturer_documents_in_tree():
 def test_no_manufacturer_documents_in_packages(built):
     for kind in ("wheel", "sdist"):
         assert not [f for f in built[kind] if f.lower().endswith(DOCUMENT_SUFFIXES)], kind
+
+
+# DHF-REQ: genesis-wp/requirement-2  DHF-TEST: genesis-wp/ac-5
+def test_modbus_connection_is_the_only_modbus_dependency(built):
+    requires = [line.split(":", 1)[1].strip() for line in built["metadata"] if line.startswith("Requires-Dist:")]
+    runtime = [r for r in requires if "extra ==" not in r]
+    names = [r.split(";")[0].split("[")[0].split("<")[0].split(">")[0].split("=")[0].strip().lower() for r in runtime]
+    assert "modbus-connection" in names
+    for direct in ("pymodbus", "tmodbus", "pymodbustcp"):
+        assert direct not in names, f"{direct} must come only through modbus-connection's extras"
+    spec = next(r for r in runtime if r.lower().startswith("modbus-connection"))
+    from packaging.requirements import Requirement
+    from packaging.version import Version
+
+    assert Version("4.12.3") in Requirement(spec.split(";")[0]).specifier

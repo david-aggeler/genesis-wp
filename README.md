@@ -2,7 +2,7 @@
 
 A Python library and device emulator for heat pumps on the Thermia **Genesis** controller platform, over Modbus TCP: Thermia Diplomat Inverter, Mega and Calibra RXT, and the Stiebel Eltron WPE-I 07.1 Plus (internal WPM-G controller). Install it as `genesis-wp` and import it as `genesis_wp`.
 
-> **Work in progress (0.1.0.dev0).** The library is still the inherited synchronous code. Async transport on Home Assistant's `modbus-connection`, read-only-by-default writes, "sensor not fitted" decoding and per-chunk failure isolation are being added. Until then, `async_set` **writes to your heat pump without any guard**. Do not call it against a real plant unless you mean to.
+> **Work in progress (0.1.0.dev0).** Modbus I/O is async on Home Assistant's [`modbus-connection`](https://github.com/home-assistant-libs/modbus-connection). Read-only-by-default writes, "sensor not fitted" decoding and per-chunk failure isolation are being added. Until then, `async_set` **writes to your heat pump without any guard**. Do not call it against a real plant unless you mean to.
 
 The heat pump serves Modbus TCP directly. Set BMC to Modbus TCP on your heat pump (Thermia), or connect to the display unit's Ethernet port (Stiebel WPE-I).
 
@@ -36,8 +36,15 @@ Legacy `mega` and `inverter` identifiers remain unchanged.
 ```python
 from genesis_wp import ThermiaGenesis
 
-thermia = ThermiaGenesis("192.168.1.111", kind="calibra_rxt")
+thermia = ThermiaGenesis("192.168.1.111", kind="calibra_rxt")   # opens its own connection
 await thermia.async_update()
+await thermia.close()
+```
+
+Inside Home Assistant, pass a unit from a shared `modbus-connection` connection instead of a host, so several integrations can use one link to the heat pump:
+
+```python
+thermia = ThermiaGenesis(unit=connection.for_unit(1), kind="stiebel_wpe_i_07_1")
 ```
 
 ## Emulator
