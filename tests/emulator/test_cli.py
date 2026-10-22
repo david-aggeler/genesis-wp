@@ -12,7 +12,7 @@ from pymodbus.client import AsyncModbusTcpClient
 from genesis_wp.emulator.cli import _instance, main
 from genesis_wp.emulator.server import _free_port
 
-from .conftest import PROFILE_606, PROFILE_615, UNIT
+from ..harness import PROFILE_606, PROFILE_615, UNIT
 
 
 def test_instance_spec():

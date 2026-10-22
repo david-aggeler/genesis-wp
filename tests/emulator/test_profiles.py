@@ -2,19 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from pathlib import Path
 
 import pytest
 
-from genesis_wp.emulator import Emulator, ProfileError, get_profile, packaged_profiles
+from genesis_wp.emulator import ProfileError, get_profile, packaged_profiles
 from genesis_wp.emulator.profile import Profile
 
-from .conftest import PROFILE_606, PROFILE_615
+from ..harness import PROFILE_606, PROFILE_615
 
-FIXTURES = Path(__file__).parent.parent / "fixtures" / "library_values"
 PROFILE_DIR = Path(__file__).parents[2] / "genesis_wp" / "emulator" / "profiles"
 
 
@@ -59,22 +57,3 @@ def test_invalid_profiles_are_rejected():
         Profile.from_dict(broken)
     with pytest.raises(ProfileError):
         get_profile("no-such-profile")
-
-
-@pytest.mark.parametrize("name", [PROFILE_606, PROFILE_615])
-async def test_inherited_library_decodes_the_captured_values(name):
-    """Round trip: the probe's own library, reading the emulator, decodes exactly what it
-    decoded from the real unit, in the same number of requests, with no rejection."""
-    from genesis_wp import ThermiaGenesis
-
-    expected = {k: v for k, v in json.loads((FIXTURES / f"{name}.json").read_text()).items() if v is not None}
-    async with Emulator(get_profile(name), port=0) as emu:
-
-        def update():
-            hp = ThermiaGenesis(emu.host, port=emu.port, kind="stiebel_wpe_i_07_1", delay=0, max_registers=16)
-            return asyncio.run(hp.async_update())
-
-        got = await asyncio.to_thread(update)  # pyModbusTCP is blocking
-    assert len(emu.requests) == 35
-    assert not [r for r in emu.requests if r.rejected]
-    assert {k: str(v) for k, v in got.items()} == {k: str(v) for k, v in expected.items()}

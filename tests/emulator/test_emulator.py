@@ -14,7 +14,7 @@ from genesis_wp.emulator import (
     get_profile,
 )
 
-from .conftest import PROFILE_606, PROFILE_615, UNIT
+from ..harness import PROFILE_606, PROFILE_615, UNIT
 
 READERS = {
     COILS: "read_coils",

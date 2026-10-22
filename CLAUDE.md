@@ -204,7 +204,8 @@ This file names commands only by intent. Arguments, flags and exit codes come fr
 
 ## Tests
 
-- pytest with pytest-asyncio. Tests stay hermetic: loopback networking only, no real device, no secrets.
+- pytest with pytest-asyncio. Tests stay hermetic: loopback networking only, no real device, no secrets. `tests/conftest.py` enforces this for the whole pytest process: any non-loopback connect, datagram or name lookup raises. Don't weaken it; point the test at the emulator instead. `unshare -rn` runs the suite in a loopback-only network namespace when you want proof.
+- Shared harness: `tests/harness.py` (profiles, expected values, `library_full_update`) and the `start_emulator` / `connect` fixtures. `tests/test_library_against_emulator.py` is the regression net every transport or decoding change must keep green.
 - Fixtures are firmware-profile snapshots captured by read-only probes, one per controller software / Genesis version (currently 6.0.6 / 17.2.40 and 6.1.5 / 17.3.145). Each fixture records its source and capture date, and carries no serial number.
 - A new firmware on the device means a new profile, captured by a read-only probe and diffed against the previous one. Never edit an existing profile in place to make a test pass.
 
