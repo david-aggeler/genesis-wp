@@ -11,8 +11,12 @@ import pytest
 
 from .harness import PROFILES, expected_library_values, library_full_update
 
-# What the inherited library sent to the real unit during the probes (max_registers=16).
+# What the inherited library sent to the real unit during the probes (max_registers=16),
+# plus the reads change_request-8 added for the WPE-I: discrete inputs 247-254 (KSM) and
+# input 413 (fan test). Inputs 57-59 fit into an existing read.
 PROBE_REQUESTS = 35
+ADDED_REQUESTS = [(2, 247, 8), (4, 413, 1)]
+EXPECTED_REQUESTS = PROBE_REQUESTS + len(ADDED_REQUESTS)
 
 
 # DHF-REQ: genesis-wp/requirement-7  DHF-TEST: genesis-wp/ac-18
@@ -28,7 +32,9 @@ async def test_full_update_decodes_the_captured_values(start_emulator, profile):
 async def test_full_update_makes_the_probe_requests_and_nothing_is_rejected(start_emulator, profile):
     emu = await start_emulator(profile)
     await library_full_update(emu)
-    assert len(emu.requests) == PROBE_REQUESTS
+    assert len(emu.requests) == EXPECTED_REQUESTS
+    for added in ADDED_REQUESTS:
+        assert added in [(r.function_code, r.address, r.count) for r in emu.requests]
     assert [r for r in emu.requests if r.rejected] == []
     assert all(r.function_code in (1, 2, 3, 4) for r in emu.requests)
 
@@ -55,4 +61,4 @@ async def test_second_full_update_on_the_same_client(start_emulator):
     finally:
         await client.close()
     assert second == first
-    assert len(emu.requests) == 2 * PROBE_REQUESTS
+    assert len(emu.requests) == 2 * EXPECTED_REQUESTS

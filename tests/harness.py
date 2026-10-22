@@ -35,6 +35,24 @@ NOT_FITTED_ON_UNIT = frozenset({
 })
 
 
+# Registers added to the WPE-I model after the capture (change_request-8): name -> (block, address).
+# Expected values come from the profile's raw values (all scale 1; bits as bool).
+ADDED_WPE_I_REGISTERS = {
+    "dinput_ksm_internal_error_1": ("discrete_inputs", 247),
+    "dinput_ksm_internal_error_2": ("discrete_inputs", 248),
+    "dinput_ksm_fan_test_pressure_sensor_before_start": ("discrete_inputs", 249),
+    "dinput_ksm_fan_test_pressure_sensor_not_triggered": ("discrete_inputs", 250),
+    "dinput_ksm_refrigerant_leak_detected": ("discrete_inputs", 251),
+    "dinput_ksm_refrigerant_leak_sensor_error": ("discrete_inputs", 252),
+    "dinput_ksm_communication_error": ("discrete_inputs", 253),
+    "dinput_ksm_fan_test_failed": ("discrete_inputs", 254),
+    "input_ksm_fan_test_status": ("input_registers", 413),
+    "input_software_version_major": ("input_registers", 57),
+    "input_software_version_minor": ("input_registers", 58),
+    "input_software_version_micro": ("input_registers", 59),
+}
+
+
 def expected_library_values(profile: str) -> dict:
     """Decoded values the library is expected to produce for this firmware.
 
@@ -46,6 +64,12 @@ def expected_library_values(profile: str) -> dict:
     for name in NOT_FITTED_ON_UNIT:
         assert expected[name] == 200.0, f"{name}: capture no longer reads the sentinel"
         expected[name] = None
+    from genesis_wp.emulator import get_profile
+
+    blocks = get_profile(profile).blocks
+    for name, (block, address) in ADDED_WPE_I_REGISTERS.items():
+        raw = blocks[block].value(address)
+        expected[name] = bool(raw) if block == "discrete_inputs" else raw
     return expected
 
 
