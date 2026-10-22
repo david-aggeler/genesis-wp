@@ -12,9 +12,17 @@ setup(
     include_package_data=True,
     url="https://github.com/ulrichwi/pythermiagenesis17",
     license="MIT",
-    packages=["pythermiagenesis"],
+    packages=["pythermiagenesis", "genesis_wp", "genesis_wp.emulator"],
+    package_data={"genesis_wp.emulator": ["profiles/*.json"]},
     python_requires=">=3.6",
     install_requires=["pymodbustcp==0.1.10"],
+    extras_require={
+        # The emulator is a pymodbus server (SimDevice/SimData need >= 3.12; HA 2026.10 ships 3.13.1).
+        "emulator": ["pymodbus>=3.13.1"],
+    },
+    entry_points={
+        "console_scripts": ["genesis-wp-emulator=genesis_wp.emulator.cli:main"],
+    },
     classifiers=[
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python",

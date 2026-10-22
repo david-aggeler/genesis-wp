@@ -32,3 +32,38 @@ Legacy `mega` and `inverter` identifiers remain unchanged.
 thermia = ThermiaGenesis("192.168.1.111", kind="calibra_rxt")
 await thermia.async_update()
 ```
+
+## Emulator
+
+`genesis_wp.emulator` serves a captured heat pump over Modbus TCP, so you can develop and test without touching a real heating plant. Each firmware profile (`genesis_wp/emulator/profiles/`) holds the address ranges a real unit answered and the raw values read from it, captured by a read-only probe. Addresses outside those ranges get Modbus exception 2, like on the device.
+
+```sh
+pip install -e ".[emulator]"
+genesis-wp-emulator --list-profiles
+genesis-wp-emulator                                    # stiebel-wpe-i-07.1-plus-6.1.5 on 127.0.0.1:5020, unit 1
+genesis-wp-emulator -i stiebel-wpe-i-07.1-plus-6.0.6@5021 -i stiebel-wpe-i-07.1-plus-6.1.5@5022
+genesis-wp-emulator --dynamics --interval 5 -v         # drifting temperatures and compressor speed, log requests
+genesis-wp-emulator --ignore-writes                    # record writes without applying them
+```
+
+In tests, use it in-process:
+
+```python
+from genesis_wp.emulator import Emulator, get_profile
+
+async with Emulator(get_profile("stiebel-wpe-i-07.1-plus-6.1.5"), port=0) as emu:
+    ...                     # connect to emu.host:emu.port, unit 1
+    emu.inject_fault("input_registers", 8, 11)   # requests touching input 8-11 now fail
+    emu.step()                                   # advance plant dynamics (dynamics=True)
+    emu.requests, emu.writes                     # every request / every write received
+```
+
+New firmware: capture a read-only probe, then convert it with `scripts/probe_to_profile.py`.
+
+## Development
+
+```sh
+sudo scripts/setup-as-root.sh     # once per machine: python3-venv, python3-pip
+scripts/setup-as-user.sh          # .venv with dev dependencies pinned to Home Assistant's versions
+.venv/bin/python -m pytest
+```
