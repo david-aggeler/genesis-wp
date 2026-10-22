@@ -39,3 +39,20 @@ async def test_full_update_reports_the_profile_firmware(start_emulator, profile)
     got = await library_full_update(emu)
     software = ".".join(str(got[f"input_control_software_version_{p}"]) for p in ("major", "minor", "micro"))
     assert software == emu.profile.firmware["software"]
+
+
+async def test_second_full_update_on_the_same_client(start_emulator):
+    """Inherited bug: the holding-116 skip check raised KeyError on every update after the first."""
+    from genesis_wp import ThermiaGenesis
+
+    from .harness import PROFILE_615, WPE_I_KIND
+
+    emu = await start_emulator(PROFILE_615)
+    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, max_registers=16)
+    try:
+        first = await client.async_update()
+        second = await client.async_update()
+    finally:
+        await client.close()
+    assert second == first
+    assert len(emu.requests) == 2 * PROBE_REQUESTS

@@ -13,6 +13,7 @@ from operator import itemgetter, attrgetter
 
 from modbus_connection import (
     ModbusConnectionError,
+    ModbusExceptionError,
     ModbusTcpParams,
     ModbusTimeoutError,
     ModbusUnit,
@@ -81,6 +82,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             raise ValueError(f'Unsupported heat pump model: {kind}')
         kind = normalized_kind
         self._read_only = bool(read_only)
+        self.unread = set()  # registers the last update could not read (chunk refused by the device)
         self._unit = unit
         self._connection = None  # our own connection, created lazily; None for an injected unit
         self._unit_id = unit_id
@@ -241,9 +243,10 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
                         f"Will not read {name} since we don't know if {ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT} is set, include this register in the request to read this"
                     )
                     continue
+                # .get: at planning time raw_data is still empty, and on a later update only self.data has it
                 if (
-                    not raw_data[ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT]
-                    and not self.data[ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT]
+                    not raw_data.get(ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT)
+                    and not self.data.get(ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT)
                 ):
                     _LOGGER.debug(
                         f"Will not read {name} since {ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT} is False which disables this register"
@@ -299,6 +302,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         )
 
         unit = await self._ensure_unit()
+        self.unread = set()
         try:
             for chunk in chunks:
                 await asyncio.sleep(self._delay)
@@ -307,16 +311,21 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
                 regtype = chunk[KEY_REG_TYPE]
                 _LOGGER.debug(f"Reading {regtype} {start_address} length {length}")
                 read_data = None
-                if regtype == REG_COIL:
-                    read_data = await unit.read_coils(start_address, length)
-                elif regtype == REG_DISCRETE_INPUT:
-                    read_data = await unit.read_discrete_inputs(start_address, length)
-                elif regtype == REG_INPUT:
-                    read_data = await unit.read_input_registers(start_address, length)
-                elif regtype == REG_HOLDING:
-                    read_data = await unit.read_holding_registers(
-                        start_address, length
-                    )
+                try:
+                    if regtype == REG_COIL:
+                        read_data = await unit.read_coils(start_address, length)
+                    elif regtype == REG_DISCRETE_INPUT:
+                        read_data = await unit.read_discrete_inputs(start_address, length)
+                    elif regtype == REG_INPUT:
+                        read_data = await unit.read_input_registers(start_address, length)
+                    elif regtype == REG_HOLDING:
+                        read_data = await unit.read_holding_registers(
+                            start_address, length
+                        )
+                except ModbusExceptionError as err:
+                    # The device answered but refused this range: lose only this chunk.
+                    self._chunk_unread(chunk, length, err)
+                    continue
                 if read_data:
                     for i, (name, address) in enumerate(chunk["slots"].items()):
                         info = REGISTERS[name]
@@ -364,9 +373,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
                             val = val / scale
                         raw_data[name] = val
                 else:
-                    raise Exception(
-                        f"Failed to read {regtype} {start_address} length {length}: empty response"
-                    )
+                    self._chunk_unread(chunk, length, "empty response")
             # for regtype in register_types:
             #    last_chunk_address = 0
             #    values = []
@@ -396,11 +403,20 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             #        last_chunk_address = chunk[1]
             #    raw_data[regtype] = values
         except (ModbusConnectionError, ModbusTimeoutError) as err:
-            # A lost link or timeout fails the whole update; chunk isolation does not apply.
+            # A lost link or timeout fails the whole update; only refused chunks are isolated.
             raise ThermiaConnectionError(f"Modbus connection failed: {err}") from err
         except Exception as e:
             _LOGGER.error(f"exception: {e}")
             print(traceback.format_exc())
 
         return raw_data
+
+    def _chunk_unread(self, chunk, length, reason):
+        """Record a chunk's registers as unread; their values stay absent, never stale."""
+        names = list(chunk["slots"])
+        self.unread.update(names)
+        _LOGGER.warning(
+            "Read of %s %s-%s failed (%s); %d registers unread: %s",
+            chunk[KEY_REG_TYPE], chunk["start"], chunk["start"] + length - 1, reason, len(names), ", ".join(names),
+        )
 

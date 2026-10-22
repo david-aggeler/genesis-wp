@@ -2,7 +2,11 @@
 
 A Python library and device emulator for heat pumps on the Thermia **Genesis** controller platform, over Modbus TCP: Thermia Diplomat Inverter, Mega and Calibra RXT, and the Stiebel Eltron WPE-I 07.1 Plus (internal WPM-G controller). Install it as `genesis-wp` and import it as `genesis_wp`.
 
-> **Work in progress (0.1.0.dev0).** Modbus I/O is async on Home Assistant's [`modbus-connection`](https://github.com/home-assistant-libs/modbus-connection), and the client is **read-only by default**. Per-chunk failure isolation is being added.
+> **Work in progress (0.1.0.dev0).** Modbus I/O is async on Home Assistant's [`modbus-connection`](https://github.com/home-assistant-libs/modbus-connection), and the client is **read-only by default**.
+
+### Partial reads
+
+An update reads registers in chunks of up to 16 per request. If the heat pump refuses one chunk (a Modbus exception response), only that chunk's registers are missing from the result; they are listed in `client.unread` and never kept from an earlier update. A lost connection or a timeout still fails the whole update with `ThermiaConnectionError`.
 
 ### Sensors that are not fitted
 
