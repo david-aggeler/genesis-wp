@@ -144,3 +144,6 @@ init.log
 .claude/materialization.json
 .claude/skills/
 .claude/agents/
+
+# Agent scratchpad (working files, survives sessions)
+scratchpad/
