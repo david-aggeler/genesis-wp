@@ -224,6 +224,7 @@ This file names commands only by intent. Arguments, flags and exit codes come fr
 
 - `LICENSE` — MIT with the upstream notices; see *License and third-party material*.
 - `openbrain-client.yaml` — committed product truth for `openbrain-client` (product, process, placeholders).
-- `pythermiagenesis/` — the inherited library; renamed to `genesis_wp/` by the stage-1 rename CR.
+- `genesis_wp/__init__.py`, `genesis_wp/const.py` — the library (inherited from pythermiagenesis17; `const.py` keeps upstream's layout and register names so fixes stay portable).
+- `genesis_wp/emulator/` — Modbus TCP emulator and firmware profiles; `scripts/probe_to_profile.py` converts read-only probe captures into profiles.
 - `setup.py`, `requirements.txt` — packaging (inherited, still pyModbusTCP until the transport CR lands).
 - `.github/workflows/python-publish.yml` — PyPI upload on GitHub release; see *The gate*.

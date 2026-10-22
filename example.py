@@ -2,9 +2,9 @@ import asyncio
 import logging
 from sys import argv
 
-from pythermiagenesis import ThermiaGenesis
-from pythermiagenesis import ThermiaConnectionError
-from pythermiagenesis.const import (
+from genesis_wp import ThermiaGenesis
+from genesis_wp import ThermiaConnectionError
+from genesis_wp.const import (
         REGISTERS, 
         REG_INPUT, 
         KEY_ADDRESS, 

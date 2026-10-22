@@ -11,3 +11,7 @@ modbus-connection[pymodbus]==4.12.3
 pytest
 pytest-asyncio
 pytest-cov
+
+# Offline package builds in tests (pip wheel --no-build-isolation, setup.py sdist)
+setuptools
+wheel

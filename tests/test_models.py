@@ -1,5 +1,5 @@
-from pythermiagenesis import ThermiaGenesis
-from pythermiagenesis.const import *
+from genesis_wp import ThermiaGenesis
+from genesis_wp.const import *
 
 def test_legacy_model_identifiers_unchanged():
     assert MODEL_MEGA == "mega"

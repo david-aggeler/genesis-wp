@@ -3,16 +3,18 @@ from setuptools import setup
 
 
 setup(
-    name="pythermiagenesis17",
-    version="0.3.0",
-    author="Ulrich Wirleitner",
-    author_email="ulrik@gmx.at",
-    description="Python wrapper for getting data from Thermia Mega, Inverter, Calibra RXT and Stiebel Eltron WPE-I 07.1 heat pumps \
-        via Modbus TCP.",
+    name="genesis-wp",
+    version="0.1.0.dev0",
+    author="David Aggeler",
+    description="Async, read-only-by-default Modbus TCP library and emulator for heat pumps on the Thermia "
+        "Genesis controller platform (Stiebel Eltron WPE-I, Thermia Mega, Inverter, Calibra RXT). "
+        "Fork of ulrichwi/pythermiagenesis17 and CJNE/pythermiagenesis.",
+    long_description=open("README.md", encoding="utf-8").read(),
+    long_description_content_type="text/markdown",
     include_package_data=True,
-    url="https://github.com/ulrichwi/pythermiagenesis17",
+    url="https://github.com/david-aggeler/genesis-wp",
     license="MIT",
-    packages=["pythermiagenesis", "genesis_wp", "genesis_wp.emulator"],
+    packages=["genesis_wp", "genesis_wp.emulator"],
     package_data={"genesis_wp.emulator": ["profiles/*.json"]},
     python_requires=">=3.6",
     install_requires=["pymodbustcp==0.1.10"],
@@ -28,12 +30,4 @@ setup(
         "Programming Language :: Python",
         "Operating System :: OS Independent",
     ],
-    setup_requires=("pytest-runner"),
-    tests_require=(
-        "asynctest",
-        "pytest-cov",
-        "pytest-asyncio",
-        "pytest-trio",
-        "pytest-tornasync",
-    ),
 )

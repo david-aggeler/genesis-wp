@@ -1,9 +1,14 @@
-# pythermiagenesis17 
+# genesis-wp
 
-A Python library for Thermia Diplomat Inverter, Mega, and Calibra RXT heat pumps. The Calibra RXT profile also supports the equivalent Stiebel-Eltron WPE-I 07.1.
+A Python library and device emulator for heat pumps on the Thermia **Genesis** controller platform, over Modbus TCP: Thermia Diplomat Inverter, Mega and Calibra RXT, and the Stiebel Eltron WPE-I 07.1 Plus (internal WPM-G controller). Install it as `genesis-wp` and import it as `genesis_wp`.
 
-This library communicates with the device using Modbus TCP.
-Set BMC to Modbus TCP on your heat pump to enable communication through this library.
+> **Work in progress (0.1.0.dev0).** The library is still the inherited synchronous code. Async transport on Home Assistant's `modbus-connection`, read-only-by-default writes, "sensor not fitted" decoding and per-chunk failure isolation are being added. Until then, `async_set` **writes to your heat pump without any guard**. Do not call it against a real plant unless you mean to.
+
+The heat pump serves Modbus TCP directly. Set BMC to Modbus TCP on your heat pump (Thermia), or connect to the display unit's Ethernet port (Stiebel WPE-I).
+
+### Lineage and license
+
+genesis-wp is a fork of [ulrichwi/pythermiagenesis17](https://github.com/ulrichwi/pythermiagenesis17) (Genesis 17.1 and the Stiebel WPE-I model), which is itself a fork of [CJNE/pythermiagenesis](https://github.com/CJNE/pythermiagenesis). Thanks to both authors. Both upstream libraries install the module `pythermiagenesis`; genesis-wp uses its own module name, so it can be installed next to either of them, for example in a Home Assistant environment. MIT licensed, like its sources (see `LICENSE`).
 
 ## documentation
 Supports Thermia Modbus protocol up to V17.1
@@ -29,6 +34,8 @@ Stiebel Eltron Modbus TCP documentation:
 Legacy `mega` and `inverter` identifiers remain unchanged.
 
 ```python
+from genesis_wp import ThermiaGenesis
+
 thermia = ThermiaGenesis("192.168.1.111", kind="calibra_rxt")
 await thermia.async_update()
 ```

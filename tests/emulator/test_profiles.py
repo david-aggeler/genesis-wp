@@ -65,7 +65,7 @@ def test_invalid_profiles_are_rejected():
 async def test_inherited_library_decodes_the_captured_values(name):
     """Round trip: the probe's own library, reading the emulator, decodes exactly what it
     decoded from the real unit, in the same number of requests, with no rejection."""
-    from pythermiagenesis import ThermiaGenesis
+    from genesis_wp import ThermiaGenesis
 
     expected = {k: v for k, v in json.loads((FIXTURES / f"{name}.json").read_text()).items() if v is not None}
     async with Emulator(get_profile(name), port=0) as emu:

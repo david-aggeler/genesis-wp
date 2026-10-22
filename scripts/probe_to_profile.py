@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Convert a read-only probe capture into a genesis-wp emulator firmware profile.
 
-The probe (homelab, 2026-10-22) ran the inherited pythermiagenesis library against the
+The probe (homelab, 2026-10-22) ran the inherited pythermiagenesis17 library (now genesis_wp) against the
 real heat pump and saved:
 
 - ``library_values.json``: decoded values keyed by library register name
@@ -34,8 +34,8 @@ import json
 import sys
 from pathlib import Path
 
-from pythermiagenesis import ThermiaGenesis
-from pythermiagenesis.const import (
+from genesis_wp import ThermiaGenesis
+from genesis_wp.const import (
     KEY_ADDRESS,
     KEY_DATATYPE,
     KEY_REG_TYPE,
@@ -65,7 +65,7 @@ BLOCK_OF = {
     REG_INPUT: "input_registers",
 }
 
-# Inverse of the status decoding in pythermiagenesis._get_data. "OFF" is also what the
+# Inverse of the status decoding in genesis_wp ThermiaGenesis._get_data. "OFF" is also what the
 # library returns for unknown raw values, so a decoded "OFF" maps back to 0.
 STATUS_RAW = {
     "OFF": 0,
