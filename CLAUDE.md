@@ -211,7 +211,8 @@ This file names commands only by intent. Arguments, flags and exit codes come fr
 ## Code conventions
 
 - Python, asyncio throughout. No blocking I/O in async code paths.
-- Modbus transport is pymodbus, at a version compatible with what the current Home Assistant release ships. Don't add a second Modbus library.
+- Modbus I/O goes through Home Assistant's `modbus-connection` (async, at a version compatible with what the current HA release ships). The client accepts an injected modbus-connection unit so HA can share one connection. Never call pymodbus, tmodbus or pyModbusTCP clients directly from the library.
+- The emulator is the exception: it is a pymodbus server (`pymodbus.server.ModbusTcpServer` with `pymodbus.simulator.SimDevice`), shipped behind an `emulator` extra. Don't use the deprecated `ModbusServerContext` / `ModbusDeviceContext` datastore classes: in pymodbus 3.13.1 they swap holding and input registers.
 - Register definitions carry address, block, scale, signedness, unit, and an optional sentinel and enum. Decoding is driven by those fields, never by special cases in code.
 - Write paths stay behind the explicit read-only opt-in. A change that weakens that guard needs its own CR and the owner's approval.
 
