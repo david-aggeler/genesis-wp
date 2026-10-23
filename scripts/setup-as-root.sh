@@ -14,7 +14,8 @@ fi
 
 # python3-venv: ensurepip, so `python3 -m venv` creates a venv with pip.
 # python3-pip:  pip for bootstrapping; project packages go into .venv, never system-wide.
-packages=(python3 python3-venv python3-pip)
+# poppler-utils: pdftotext, to read manufacturer register tables into scratchpad/ (never committed).
+packages=(python3 python3-venv python3-pip poppler-utils)
 
 missing=()
 for pkg in "${packages[@]}"; do

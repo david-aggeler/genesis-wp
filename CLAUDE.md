@@ -55,7 +55,7 @@ Use these only as chat shorthand. **Records always carry the full name.**
 - An async Python library (module `genesis_wp`, distribution `genesis-wp`) for heat pumps on the Thermia Genesis controller platform, over Modbus TCP. The first target is the Stiebel Eltron WPE-I 07.1 Plus.
 - A Modbus TCP emulator (`genesis_wp.emulator`, CLI `genesis-wp-emulator`) serving captured firmware-profile snapshots, so nothing has to be tested against the live plant.
 - A fork of [ulrichwi/pythermiagenesis17](https://github.com/ulrichwi/pythermiagenesis17), itself a fork of [CJNE/pythermiagenesis](https://github.com/CJNE/pythermiagenesis). Remotes: `origin` (ours), `upstream` (ulrichwi), `cjne`.
-- **Not** a Home Assistant integration. That is a separate, not-yet-named product that consumes this library. Don't build it here.
+- **Not** a Home Assistant integration. That is the separate product genesis-wp-ha (repo david-aggeler/genesis-wp-ha, HA domain `genesis_wp`). It consumes this library by pinning a git commit, and there is no PyPI release until it works. Don't build it here. Cross-product record links are rejected, so cite genesis-wp-ha records in text. When a fix it needs lands on master, send it the full commit SHA.
 - **Not** in charge of rollout. The homelab product owns deployment to its VMs and its exploration-8. When a stage lands, tell homelab.
 
 Direction and principles live in gold, in genesis-wp vision-1.
@@ -65,6 +65,7 @@ Direction and principles live in gold, in genesis-wp vision-1.
 - **MIT, same as the source.** Keep `Copyright (c) 2020 Johan Isacsson` and `Copyright (c) 2026 Ulrich Wirleitner` in `LICENSE` verbatim. Our notice `Copyright (c) 2026 David Aggeler` goes alongside them and never replaces them.
 - New dependencies must be MIT-compatible (pymodbus is BSD-3-Clause). Check the license before adding one.
 - **Never commit manufacturer documents**: no PDFs, manuals, screenshots or display photos. Commit register *facts* with a source reference, for example "Stiebel doc 372257-47978-0071" or "probe 2026-10-22, fw 6.1.5".
+- To read a manufacturer PDF, extract its text into the gitignored scratchpad with `pdftotext -layout <pdf> scratchpad/<name>.txt`. `scripts/setup-as-root.sh` installs it. The register sources are the Stiebel WPE-I doc 372257-47978-0071 (model level) and the Thermia Genesis 17.1 Calibra Modbus protocol (platform level). Both live in the homelab DEV docs, never in this repo.
 - **Keep the device serial number out of** the repo, fixtures, records and logs. Strip it from captures before committing.
 
 ## Operational conventions

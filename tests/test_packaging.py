@@ -89,3 +89,12 @@ def test_modbus_connection_is_the_only_modbus_dependency(built):
     from packaging.version import Version
 
     assert Version("4.12.3") in Requirement(spec.split(";")[0]).specifier
+
+
+# DHF-REQ: genesis-wp/requirement-11  DHF-TEST: genesis-wp/ac-30
+def test_root_setup_installs_pdf_text_extraction():
+    import re
+
+    script = (ROOT / "scripts" / "setup-as-root.sh").read_text()
+    packages = re.search(r"^packages=\((.*)\)$", script, re.M).group(1).split()
+    assert "poppler-utils" in packages
