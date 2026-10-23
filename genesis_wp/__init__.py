@@ -6,7 +6,6 @@ import logging
 
 import datetime
 import asyncio
-import traceback
 
 from datetime import timedelta
 from operator import itemgetter, attrgetter
@@ -112,14 +111,23 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             )
             self._unit = self._connection.for_unit(self._unit_id)
         if not self._connection.connected:
-            _LOGGER.info("Opening a Modbus TCP connection to %s:%s", self._host, self._port)
+            # The host is topology: never log it or put it in exception text (requirement-9).
+            _LOGGER.info("Opening a Modbus TCP connection to unit %s", self._unit_id)
+            failure = None
             try:
                 await self._connection.connect()
             except (ModbusConnectionError, ModbusTimeoutError, OSError) as err:
-                raise ThermiaConnectionError(
-                    f"Failed to connect to {self._host}:{self._port}"
-                ) from err
+                failure = err
+            if failure is not None:
+                # Raised outside the except block, so neither __cause__ nor __context__
+                # carries the transport error, whose text contains the host.
+                raise self._connection_failed("Failed to connect to", failure) from None
         return self._unit
+
+    def _connection_failed(self, what, err) -> ThermiaConnectionError:
+        """A host-free connection error; the cause is logged by class name only."""
+        _LOGGER.debug("%s unit %s: %s", what, self._unit_id, type(err).__name__)
+        return ThermiaConnectionError(f"{what} the Modbus TCP device (unit {self._unit_id})")
 
     async def close(self):
         """Close the connection this client opened itself; an injected unit is left alone."""
@@ -220,8 +228,8 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             else:
                 raise "This register can not be changed"
         except Exception as e:
-            _LOGGER.error(f"exception: {e}")
-            print(traceback.format_exc())
+            _LOGGER.error("Write of %s failed: %s", register, type(e).__name__)
+            _LOGGER.debug("Write of %s failed", register, exc_info=True)
         return value
 
     async def _get_data(self, registers):
@@ -303,6 +311,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
 
         unit = await self._ensure_unit()
         self.unread = set()
+        failure = None
         try:
             for chunk in chunks:
                 await asyncio.sleep(self._delay)
@@ -402,12 +411,14 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             #            raise Exception(f"Failed to read {regtype} {start_address} length {length}", self._client.last_error())
             #        last_chunk_address = chunk[1]
             #    raw_data[regtype] = values
-        except (ModbusConnectionError, ModbusTimeoutError) as err:
+        except (ModbusConnectionError, ModbusTimeoutError, OSError) as err:
             # A lost link or timeout fails the whole update; only refused chunks are isolated.
-            raise ThermiaConnectionError(f"Modbus connection failed: {err}") from err
+            failure = err
         except Exception as e:
-            _LOGGER.error(f"exception: {e}")
-            print(traceback.format_exc())
+            _LOGGER.error("Update failed: %s", type(e).__name__)
+            _LOGGER.debug("Update failed", exc_info=True)
+        if failure is not None:
+            raise self._connection_failed("Lost the connection to", failure) from None
 
         return raw_data
 
