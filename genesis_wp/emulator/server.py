@@ -104,6 +104,8 @@ class Emulator:
     seed: int = 0
     #: Apply writes to the register state. Writes are always recorded.
     apply_writes: bool = True
+    #: Raw values by ``(block, address)`` served instead of the profile's (see Profile.with_overrides).
+    overrides: dict[tuple[str, int], int] | None = None
 
     requests: list[Request] = field(default_factory=list, init=False)
     faults: list[Fault] = field(default_factory=list, init=False)
@@ -111,6 +113,8 @@ class Emulator:
     connections: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
+        if self.overrides:
+            self.profile = self.profile.with_overrides(self.overrides)
         self._rng = random.Random(self.seed)
         self._drift = [_Drift(d, self._initial(d)) for d in self.profile.dynamics] if self.dynamics else []
         self._server: ModbusTcpServer | None = None
