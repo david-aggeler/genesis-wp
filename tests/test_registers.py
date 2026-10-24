@@ -61,6 +61,37 @@ async def test_input_30_is_read_alone(start_emulator):
     assert not [r for r in reads if r[0] == 4 and 31 <= r[1] <= 35]
 
 
+# DHF-REQ: genesis-wp/requirement-10  DHF-TEST: genesis-wp/ac-28
+def test_every_wpe_i_register_declares_its_source():
+    from genesis_wp.const import (
+        KEY_ADDRESS, KEY_REG_TYPE, KEY_SOURCE, KEY_SOURCE_REF, SOURCE_MODEL_DOC, SOURCE_PLATFORM_DOC,
+        SOURCE_PROBE,
+    )
+
+    from .register_sources import STIEBEL_WPE_I_071, THERMIA_GENESIS_17_1
+
+    model = MODEL_STIEBEL_WPE_I_071
+    counts = dict.fromkeys((SOURCE_MODEL_DOC, SOURCE_PLATFORM_DOC, SOURCE_PROBE), 0)
+    for name, meta in REGISTERS.items():
+        if not meta[model]:
+            assert model not in meta.get(KEY_SOURCE, {}), name
+            continue
+        block, address = meta[KEY_REG_TYPE], meta[KEY_ADDRESS]
+        source = meta.get(KEY_SOURCE, {}).get(model)
+        if address in STIEBEL_WPE_I_071[block]:
+            expected = SOURCE_MODEL_DOC
+        elif address in THERMIA_GENESIS_17_1[block]:
+            expected = SOURCE_PLATFORM_DOC
+        else:
+            expected = SOURCE_PROBE
+        assert source == expected, name
+        if source == SOURCE_PROBE:
+            assert meta.get(KEY_SOURCE_REF, {}).get(model), f"{name}: probe entry names no capture"
+        counts[source] += 1
+    # Counts at 3753fa3 (issue-4): 87 registers outside the Stiebel doc, 84 of them in Thermia's.
+    assert counts == {SOURCE_MODEL_DOC: 181, SOURCE_PLATFORM_DOC: 84, SOURCE_PROBE: 3}
+
+
 # DHF-REQ: genesis-wp/requirement-5  DHF-TEST: genesis-wp/ac-13
 def test_holding_307_308_311_312_are_mega_only_at_thermia_scale():
     from genesis_wp.const import KEY_ADDRESS, KEY_REG_TYPE, KEY_SCALE, MODEL_MEGA, REG_HOLDING

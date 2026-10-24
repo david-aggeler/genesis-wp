@@ -12,6 +12,10 @@ An update reads registers in chunks of up to 16 per request. If the heat pump re
 
 The Stiebel WPE-I reports an unwired sensor with a fixed raw value (20000 at scale 100, 2000 for the room sensor at scale 10), which would otherwise decode as 200.0 °C. For registers where the Stiebel documentation declares this value, the library reports `None` instead. Declarations are per model (`KEY_NOT_FITTED` in `genesis_wp/const.py`); other models keep reporting the number, because Thermia's documents declare no such value.
 
+### Register sources
+
+Every register the WPE-I model reads declares where it comes from, per model (`KEY_SOURCE` in `genesis_wp/const.py`): `model_doc` when Stiebel's WPE-I Modbus document lists it, `platform_doc` when only Thermia's Genesis 17.1 platform document does, and `probe` when only a recorded read-only probe backs it (`KEY_SOURCE_REF` names the capture). A `platform_doc` register may not be supported by the WPE-I, for example the hot-gas recovery and external electricity meter groups. The library still reads and reports it, so a consumer can label it rather than hide it.
+
 ### Read-only by default
 
 A client refuses every write (`async_set`) with `GenesisReadOnlyError` before anything is sent to the heat pump. To write, construct it with `read_only=False`; the setting cannot be changed afterwards. Writes go straight to the controller of a real heating plant without any bounds check yet, so only opt in when you mean it.
