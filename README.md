@@ -93,6 +93,8 @@ async with Emulator(get_profile("stiebel-wpe-i-07.1-plus-6.1.5"), port=0) as emu
     emu.requests, emu.writes                     # every request / every write received
 ```
 
+To test a state the probes did not capture, pass raw values by `(block, address)`, for example `Emulator(profile, port=0, overrides={("coils", 41): 1, ("holding_registers", 116): 350})`. An address outside the profile's ranges is served on its own; the profile file is not changed.
+
 New firmware: capture a read-only probe, then convert it with `scripts/probe_to_profile.py`.
 
 ## Development

@@ -146,19 +146,13 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
     ):  # pylint:disable=too-many-branches
         """Update data from heat pump."""
         await self._ensure_unit()
-        use_registers = []
-        if only_registers != None:
-            # Make sure to sort registers by type and address
-            use_registers = sorted(
-                only_registers,
-                key=(
-                    lambda x: f"{REGISTERS[x][KEY_REG_TYPE]}-{REGISTERS[x][KEY_ADDRESS]:03}"
-                ),
-            )
-        else:
-            use_registers = dict(
-                filter(lambda x: x[1][self._kind], REGISTERS.items())
-            ).keys()
+        if only_registers is None:
+            only_registers = [name for name, meta in REGISTERS.items() if meta[self._kind]]
+        # The read plan assumes type-and-address order on both paths (issue-7)
+        use_registers = sorted(
+            only_registers,
+            key=lambda x: (REGISTERS[x][KEY_REG_TYPE], REGISTERS[x][KEY_ADDRESS]),
+        )
 
         raw_data = await self._get_data(use_registers)
 
@@ -246,19 +240,26 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             if name == ATTR_HOLDING_FIXED_SYSTEM_SUPPLY_SET_POINT:
                 # This will give an errror unless coil 42 is True, so skip if we don't know this or if it's false
                 enableAttr = ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT
+                skip = False
                 if enableAttr not in raw_data and enableAttr not in self.data:
                     _LOGGER.debug(
                         f"Will not read {name} since we don't know if {ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT} is set, include this register in the request to read this"
                     )
-                    continue
+                    skip = True
                 # .get: at planning time raw_data is still empty, and on a later update only self.data has it
-                if (
+                elif (
                     not raw_data.get(ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT)
                     and not self.data.get(ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT)
                 ):
                     _LOGGER.debug(
                         f"Will not read {name} since {ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT} is False which disables this register"
                     )
+                    skip = True
+                if skip:
+                    # A skipped register ends the chunk: no request may span it (issue-7)
+                    if chunk != None:
+                        chunks.append(chunk)
+                        chunk = None
                     continue
 
             reg_address = meta[KEY_ADDRESS]

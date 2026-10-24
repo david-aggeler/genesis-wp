@@ -77,10 +77,12 @@ REGISTER_RANGES = {
         REG_HOLDING: [[0, 16], [22, 30], [49, 50], [58, 88], [105, 125], [298, 304], [321, 321]],
     },
     MODEL_STIEBEL_WPE_I_071: {
-        REG_COIL: [[3, 42], [59, 61]],
-        REG_DISCRETE_INPUT: [[0, 3], [9, 16], [22, 36], [47, 87], [199, 246], [247, 254]],
-        REG_INPUT: [[1, 2], [4, 27], [30, 30], [36, 84], [106, 163], [311, 319], [413, 413]],  # 31-35: not in the Stiebel doc, never read
-        REG_HOLDING: [[0, 16], [22, 30], [49, 50], [58, 88], [105, 125], [298, 304], [321, 321]],
+        # Ranges both WPE-I profiles (6.0.6, 6.1.5) implement, so no read spans an address the
+        # read-only probes never read (issue-7). Holding 116 stands alone: read only while coil 41 enables it.
+        REG_COIL: [[3, 14], [20, 35], [37, 42]],
+        REG_DISCRETE_INPUT: [[0, 3], [9, 16], [22, 36], [47, 60], [66, 79], [83, 86], [199, 211], [218, 225], [235, 254]],
+        REG_INPUT: [[1, 2], [4, 26], [30, 30], [36, 84], [106, 137], [139, 147], [157, 158], [160, 163], [311, 319], [413, 413]],  # 31-35: not in the Stiebel doc, never read
+        REG_HOLDING: [[0, 12], [16, 16], [22, 30], [49, 50], [58, 70], [75, 88], [105, 115], [116, 116], [117, 125], [298, 304], [321, 321]],
     },
 }
 ATTR_COIL_RESET_ALL_ALARMS = "coil_reset_all_alarms"

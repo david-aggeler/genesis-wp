@@ -14,7 +14,8 @@ are enabled. Packaged profiles live next to this module in ``profiles/``.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from importlib import resources
 from pathlib import Path
 
@@ -106,6 +107,25 @@ class Profile:
             )
         except (KeyError, TypeError, ValueError) as exc:
             raise ProfileError(f"malformed profile: {exc}") from exc
+        profile._validate()
+        return profile
+
+    def with_overrides(self, overrides: Mapping[tuple[str, int], int]) -> Profile:
+        """Return a copy with raw values set, by ``(block, address)``. For tests only.
+
+        An address outside every range gets a single-address range of its own, so a request
+        spanning it from a neighboring range is still refused. The profile file is never touched.
+        """
+        blocks = dict(self.blocks)
+        for (name, address), raw in overrides.items():
+            if name not in blocks:
+                raise ProfileError(f"override: unknown block {name!r}")
+            block = blocks[name]
+            ranges = block.ranges
+            if not block.implemented(address):
+                ranges = tuple(sorted(ranges + ((address, address),)))
+            blocks[name] = Block(name, ranges, {**block.values, int(address): int(raw)})
+        profile = replace(self, blocks=blocks)
         profile._validate()
         return profile
 
