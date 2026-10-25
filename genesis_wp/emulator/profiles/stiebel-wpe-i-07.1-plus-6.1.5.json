@@ -2,6 +2,7 @@
  "format": "genesis-wp-profile/1",
  "name": "stiebel-wpe-i-07.1-plus-6.1.5",
  "device": "Stiebel Eltron WPE-I 07.1 Plus H 400 (internal WPM-G, Thermia Genesis controller)",
+ "model": "stiebel_wpe_i_07_1",
  "firmware": {
   "software": "6.1.5",
   "controller": "17.3.145"

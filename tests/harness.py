@@ -10,13 +10,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from genesis_wp.emulator import Emulator
+from genesis_wp.emulator import Emulator, get_profile
 
 PROFILE_606 = "stiebel-wpe-i-07.1-plus-6.0.6"  # software 6.0.6 / Genesis 17.2.40
 PROFILE_615 = "stiebel-wpe-i-07.1-plus-6.1.5"  # software 6.1.5 / Genesis 17.3.145
 PROFILES = (PROFILE_606, PROFILE_615)
 UNIT = 1
-WPE_I_KIND = "stiebel_wpe_i_07_1"
+WPE_I_KIND = get_profile(PROFILE_615).model  # the library model the profiles declare
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -94,7 +94,7 @@ async def library_full_update(emu: Emulator) -> dict:
     """
     from genesis_wp import ThermiaGenesis
 
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, max_registers=16)
+    client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0, max_registers=16)
     try:
         return await client.async_update()
     finally:

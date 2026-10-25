@@ -256,6 +256,7 @@ def convert(probe_dir: Path, software: str, controller: str, captured: str, supp
         "format": "genesis-wp-profile/1",
         "name": f"stiebel-wpe-i-07.1-plus-{software}",
         "device": "Stiebel Eltron WPE-I 07.1 Plus H 400 (internal WPM-G, Thermia Genesis controller)",
+        "model": KIND,
         "firmware": {"software": software, "controller": controller},
         "unit_id": 1,
         "source": {
