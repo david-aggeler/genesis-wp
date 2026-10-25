@@ -1,6 +1,8 @@
 """Firmware profiles: the register state of one captured device firmware.
 
-A profile is a JSON file (format ``genesis-wp-profile/1``) with, per Modbus block:
+A profile is a JSON file (format ``genesis-wp-profile/1``). It names the library model
+of the captured device (``model``, a key of ``genesis_wp.const.MODEL_NAMES``) and has, per
+Modbus block:
 
 - ``ranges``: inclusive ``[start, end]`` address spans the real unit answered. Requests
   touching any address outside them get Modbus exception 2 (illegal data address).
@@ -18,6 +20,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from importlib import resources
 from pathlib import Path
+
+from ..const import MODEL_NAMES
 
 FORMAT = "genesis-wp-profile/1"
 
@@ -78,6 +82,8 @@ class Profile:
 
     name: str
     device: str
+    #: Library model key of the captured device, the ``kind`` a client uses with this profile.
+    model: str
     firmware: dict[str, str]
     unit_id: int
     source: dict
@@ -99,6 +105,7 @@ class Profile:
             profile = cls(
                 name=data["name"],
                 device=data["device"],
+                model=data["model"],
                 firmware=dict(data["firmware"]),
                 unit_id=int(data["unit_id"]),
                 source=dict(data["source"]),
@@ -130,6 +137,8 @@ class Profile:
         return profile
 
     def _validate(self) -> None:
+        if not isinstance(self.model, str) or self.model not in MODEL_NAMES:
+            raise ProfileError(f"unknown model {self.model!r}, expected one of {', '.join(MODEL_NAMES)}")
         for block in self.blocks.values():
             for start, end in block.ranges:
                 if not 0 <= start <= end <= 0xFFFF:
