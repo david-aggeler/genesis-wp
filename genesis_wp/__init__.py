@@ -6,6 +6,7 @@ import logging
 
 import datetime
 import asyncio
+from dataclasses import dataclass
 
 from datetime import timedelta
 from operator import itemgetter, attrgetter
@@ -19,6 +20,9 @@ from modbus_connection import (
 )
 
 from .const import *
+from . import capabilities as _capabilities
+from .capabilities import ABSENT, PRESENT, UNKNOWN, Capability
+from .groups import register_category, register_concerns, register_group
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -43,6 +47,21 @@ class ThermiaConnectionError(ThermiaException):
 
 class GenesisReadOnlyError(ThermiaException):
     """A write was attempted on a client constructed without ``read_only=False``."""
+
+
+@dataclass(frozen=True)
+class EnumValue:
+    """An enumerated register's value: the raw value and its documented label.
+
+    ``label`` is None when the source documents no label for ``raw`` (never coerced).
+    """
+
+    raw: int
+    label: str | None
+
+    @property
+    def labeled(self) -> bool:
+        return self.label is not None
 
 
 def num_to_bin(value):
@@ -70,7 +89,8 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
     """
 
     def __init__(self, host=None, port=502, kind="inverter", delay=0.1, max_registers=16, unit_id=1,
-                 *, unit: ModbusUnit | None = None, timeout=DEFAULT_TIMEOUT, read_only=True):
+                 *, unit: ModbusUnit | None = None, timeout=DEFAULT_TIMEOUT, read_only=True,
+                 capability_overrides=None):
         """Initialize."""
 
         if (host is None) == (unit is None):
@@ -82,6 +102,11 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         kind = normalized_kind
         self._read_only = bool(read_only)
         self.unread = set()  # registers the last update could not read (chunk refused by the device)
+        # Plant capabilities after the last update (requirement-13), and enum labels (requirement-16).
+        self.capabilities: dict[str, Capability] = {}
+        self.labels: dict[str, EnumValue] = {}
+        self._capability_overrides = _capabilities.validate_overrides(capability_overrides)
+        self._capabilities_seen: set[str] = set()
         self._unit = unit
         self._connection = None  # our own connection, created lazily; None for an injected unit
         self._unit_id = unit_id
@@ -158,6 +183,8 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
 
         if not raw_data:
             self.data = {}
+            self.labels = {}
+            self.capabilities = {}
             return {}
 
         # _LOGGER.debug("RAW data: %s", raw_data)
@@ -184,7 +211,50 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             _LOGGER.debug("Incomplete data from modbus.")
             _LOGGER.debug(err)
         self.data = data
+        self.labels = self._decode_labels(data)
+        self.capabilities = _capabilities.evaluate(
+            self._kind, data, overrides=self._capability_overrides, seen=self._capabilities_seen
+        )
         return data
+
+    def _decode_labels(self, data) -> dict[str, EnumValue]:
+        labels = {}
+        for name, value in data.items():
+            table = REGISTERS[name].get(KEY_ENUM, {}).get(self._kind)
+            if table is None or value is None:
+                continue
+            label = table.get(value)
+            if label is None:
+                _LOGGER.warning("%s: raw value %s has no documented label", name, value)
+            labels[name] = EnumValue(value, label)
+        return labels
+
+    def capability_state(self, name: str) -> str:
+        """State of one capability after the last update: present, absent or unknown.
+
+        A capability the model has no registers for is absent; before any update, or for a
+        capability whose evidence was not read, unknown.
+        """
+        if name not in _capabilities.CAPABILITY_NAMES:
+            raise ValueError(f"unknown capability {name!r}")
+        if name in self.capabilities:
+            return self.capabilities[name].state
+        if not _capabilities.gated_registers(_capabilities._RULES[name], self._kind):
+            return ABSENT
+        return UNKNOWN
+
+    def override_capability(self, name: str, state: str | None) -> None:
+        """Override a detected capability (state None removes the override); re-evaluates the last update."""
+        overrides = dict(self._capability_overrides)
+        if state is None:
+            overrides.pop(name, None)
+        else:
+            overrides[name] = state
+        self._capability_overrides = _capabilities.validate_overrides(overrides)
+        if self.data:
+            self.capabilities = _capabilities.evaluate(
+                self._kind, self.data, overrides=self._capability_overrides, seen=self._capabilities_seen
+            )
 
     @property
     def available(self):
