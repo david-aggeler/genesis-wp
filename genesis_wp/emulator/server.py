@@ -21,13 +21,16 @@ import asyncio
 import logging
 import random
 import time
-from dataclasses import dataclass, field
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 
 from pymodbus.constants import ExcCodes
 from pymodbus.pdu import ExceptionResponse, ModbusPDU
 from pymodbus.server import ModbusTcpServer
 from pymodbus.simulator import DataType, SimData, SimDevice
 
+from . import heating
+from .capabilities import selection_overrides
 from .profile import (
     BLOCKS,
     COILS,
@@ -105,7 +108,12 @@ class Emulator:
     #: Apply writes to the register state. Writes are always recorded.
     apply_writes: bool = True
     #: Raw values by ``(block, address)`` served instead of the profile's (see Profile.with_overrides).
+    #: Applied after ``capabilities``.
     overrides: dict[tuple[str, int], int] | None = None
+    #: Plant capabilities switched on (True) or off (False), by library capability name (requirement-14).
+    capabilities: Mapping[str, bool] | None = None
+    #: Hold the outdoor temperature [°C] of the heating model instead of letting it drift.
+    outdoor_temperature: float | None = None
 
     requests: list[Request] = field(default_factory=list, init=False)
     faults: list[Fault] = field(default_factory=list, init=False)
@@ -113,10 +121,24 @@ class Emulator:
     connections: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
+        if self.capabilities:
+            values, notes = selection_overrides(self.profile, self.capabilities)
+            profile = self.profile.with_overrides(values)
+            source = {**profile.source, "notes": [*profile.source.get("notes", []), *notes]}
+            self.profile = replace(profile, source=source)
         if self.overrides:
             self.profile = self.profile.with_overrides(self.overrides)
         self._rng = random.Random(self.seed)
         self._drift = [_Drift(d, self._initial(d)) for d in self.profile.dynamics] if self.dynamics else []
+        self.heating: heating.HeatingModel | None = None
+        if self.dynamics and self._has_heating_registers():
+            self.heating = heating.HeatingModel.from_values(
+                self.profile.blocks[HOLDING_REGISTERS].value,
+                self.profile.blocks[INPUT_REGISTERS].value,
+                outdoor=self.outdoor_temperature,
+            )
+            owned = {(INPUT_REGISTERS, a) for a in heating.INPUTS}
+            self._drift = [d for d in self._drift if (d.spec.block, d.spec.address) not in owned]
         self._server: ModbusTcpServer | None = None
         self._ticker: asyncio.Task | None = None
 
@@ -148,6 +170,8 @@ class Emulator:
                 if not spec.min <= new <= spec.max:
                     new = drift.value - delta  # reflect at the bound
                 drift.value = min(max(new, spec.min), spec.max)
+            if self.heating is not None:
+                self.heating.step(self._rng)
 
     async def start(self) -> None:
         if self._server is not None:
@@ -205,6 +229,13 @@ class Emulator:
         for drift in self._drift:
             if drift.spec.block == block:
                 registers[drift.spec.address - start_address] = drift.value & 0xFFFF
+        if self.heating is not None:
+            if block == INPUT_REGISTERS:
+                for address, raw in self.heating.inputs().items():
+                    registers[address - start_address] = raw
+            elif block == HOLDING_REGISTERS and values is not None and self.apply_writes:
+                for offset, raw in enumerate(values):
+                    self.heating.write(address + offset, raw & 0xFFFF)
         if values is not None and not self.apply_writes:
             # Keep the current state: overwrite the incoming values with what is stored.
             if block in (COILS, DISCRETE_INPUTS):
@@ -215,6 +246,10 @@ class Emulator:
                 first = address - start_address
                 values[:] = registers[first : first + len(values)]
         return None
+
+    def _has_heating_registers(self) -> bool:
+        holding, inputs = self.profile.blocks[HOLDING_REGISTERS], self.profile.blocks[INPUT_REGISTERS]
+        return all(holding.implemented(a) for a in heating.HOLDING) and all(inputs.implemented(a) for a in heating.INPUTS)
 
     def _initial(self, spec: DynamicRegister) -> int:
         raw = self.profile.blocks[spec.block].value(spec.address)

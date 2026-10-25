@@ -109,6 +109,10 @@ Each profile names the library model of the device it was captured from, so a cl
 
 To test a state the probes did not capture, pass raw values by `(block, address)`, for example `Emulator(profile, port=0, overrides={("coils", 41): 1, ("holding_registers", 116): 350})`. An address outside the profile's ranges is served on its own; the profile file is not changed.
 
+To present a plant with or without a module, switch library capabilities on or off: `--capability hot_water=on --capability heating_circuit_2=off` on the command line, or `Emulator(profile, port=0, capabilities={"hot_water": True})`. The emulator sets the module's enable coil and fitted or "not fitted" sensor values so the library's capability detection reports exactly the selection. Values the capture does not contain are synthetic and listed in `emu.profile.source["notes"]`. A selection the plant cannot present (an unknown name, a module the model has no registers for, switching off the built-in KSM, or switching off `smart_grid` or `additional_heater`, whose all-zero signals read as unknown) is rejected; the CLI exits with status 2.
+
+With dynamics on, the emulator also runs a heating model: the HC1 set point (input 18) and the HC2 set point (input 147) follow their seven curve points (holding 6-12, 109-115) over the outdoor temperature (input 13), linearly and clamped to the supply limits; T33, the buffer and T32 follow with a lag, and the mixing valve stays open while the buffer is below the HC2 set point. Curve points written to the emulator take effect on the next step. `--outdoor-temperature -5` (or `outdoor_temperature=-5.0`) holds the outdoor temperature instead of letting it drift.
+
 New firmware: capture a read-only probe, then convert it with `scripts/probe_to_profile.py`.
 
 ## Development

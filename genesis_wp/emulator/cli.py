@@ -5,6 +5,8 @@ Examples::
     genesis-wp-emulator                                   # default profile on 127.0.0.1:5020
     genesis-wp-emulator -i stiebel-wpe-i-07.1-plus-6.0.6@5021 -i stiebel-wpe-i-07.1-plus-6.1.5@5022
     genesis-wp-emulator --dynamics --interval 5 -v
+    genesis-wp-emulator --capability hot_water=on --capability heating_circuit_2=off
+    genesis-wp-emulator --dynamics --outdoor-temperature -5
     genesis-wp-emulator --list-profiles
 """
 
@@ -16,6 +18,7 @@ import logging
 import signal
 import sys
 
+from .capabilities import parse_selection
 from .profile import ProfileError, get_profile, packaged_profiles
 from .server import Emulator
 
@@ -48,6 +51,15 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--dynamics", action="store_true", help="simulate drifting temperatures and compressor speed")
     parser.add_argument("--interval", type=float, default=5.0, help="seconds between dynamics steps (default 5)")
     parser.add_argument("--seed", type=int, default=0, help="random seed for dynamics (default 0)")
+    parser.add_argument(
+        "--capability", action="append", default=[], metavar="NAME=on|off",
+        help="switch a plant capability on or off for every instance (library capability names, "
+        "for example hot_water, pool, electric_meter); repeatable",
+    )
+    parser.add_argument(
+        "--outdoor-temperature", type=float, metavar="CELSIUS",
+        help="with --dynamics: hold the outdoor temperature of the heating model instead of letting it drift",
+    )
     parser.add_argument("--ignore-writes", action="store_true", help="record writes but do not apply them")
     parser.add_argument("--list-profiles", action="store_true", help="list packaged profiles and exit")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="-v: requests, -vv: pymodbus debug")
@@ -69,10 +81,15 @@ async def _run(args: argparse.Namespace) -> None:
             dynamics_interval=args.interval if args.dynamics else 0.0,
             seed=args.seed,
             apply_writes=not args.ignore_writes,
+            capabilities=args.selection,
+            outdoor_temperature=args.outdoor_temperature,
         ))
     for emu in emulators:
         await emu.start()
         print(f"{emu.profile.name} (software {emu.profile.firmware['software']}) on {emu.host}:{emu.port}, unit {emu.profile.unit_id}", flush=True)
+        for note in emu.profile.source.get("notes", []):
+            if note.startswith("capability selection"):
+                print(f"  {note}", flush=True)
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -98,6 +115,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.verbose >= 2:
         logging.getLogger("pymodbus").setLevel(logging.DEBUG)
     try:
+        args.selection = parse_selection(args.capability)
         asyncio.run(_run(args))
     except ProfileError as exc:
         print(f"error: {exc}", file=sys.stderr)
