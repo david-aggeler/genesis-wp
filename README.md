@@ -16,6 +16,18 @@ The Stiebel WPE-I reports an unwired sensor with a fixed raw value (20000 at sca
 
 Every register the WPE-I model reads declares where it comes from, per model (`KEY_SOURCE` in `genesis_wp/const.py`): `model_doc` when Stiebel's WPE-I Modbus document lists it, `platform_doc` when only Thermia's Genesis 17.1 platform document does, and `probe` when only a recorded read-only probe backs it (`KEY_SOURCE_REF` names the capture). A `platform_doc` register may not be supported by the WPE-I, for example the hot-gas recovery and external electricity meter groups. The library still reads and reports it, so a consumer can label it rather than hide it.
 
+### Groups and categories
+
+Every register a model enables has a group (the vendor document section, for example `heating_circuit_2`, `brine_circuit`, `power_consumption_control`) and a category (the documents' reference code, for example `additional_heating_circuits`). Read them with `register_group(name)` and `register_category(name)`; an alarm also names the group it concerns, `register_concerns(name)`. The tables are in `genesis_wp/groups.py`.
+
+### Plant capabilities
+
+The controller has no "installed modules" register. After each update, `client.capabilities` maps each module the model has registers for (`hot_water`, `heating_circuit_2`, `buffer_tank`, `pool`, `active_cooling`, `passive_cooling`, `hot_gas_recovery`, `room_sensor`, `additional_heater`, `electric_meter`, `smart_grid`, `ksm`, `heating_circuit_3`/`_4`) to a `Capability` with a `state` (`present`, `absent` or `unknown`), the `evidence` that decided it and the registers it `gates`. Detection uses only values the update read: enable coils, "not fitted" sensors, electric-meter phase voltages (all 0 = no meter), and for `smart_grid` the SG Ready input DI22 or mode register, unknown until one is seen non-zero. `client.capability_state(name)` also answers for modules the model lacks (absent). Override a detection with `capability_overrides={"pool": "present"}` or `client.override_capability(name, state)`. The rules are in `genesis_wp/capabilities.py`.
+
+### SG Ready labels
+
+`client.data` keeps raw values. For enumerated registers with documented values, `client.labels[name]` is an `EnumValue(raw, label)`: the SG Ready mode (holding 124: `normal`, `load_up`, `utility_block`, `maximum`) and the smart-grid state (input 82: `utility_block`, `normal`, `comfort`, `maximum`). A value without a documented label has `label=None` and is logged, never mapped to a neighbor.
+
 ### Read-only by default
 
 A client refuses every write (`async_set`) with `GenesisReadOnlyError` before anything is sent to the heat pump. To write, construct it with `read_only=False`; the setting cannot be changed afterwards. Writes go straight to the controller of a real heating plant without any bounds check yet, so only opt in when you mean it.
