@@ -136,6 +136,8 @@ class Emulator:
                 self.profile.blocks[HOLDING_REGISTERS].value,
                 self.profile.blocks[INPUT_REGISTERS].value,
                 outdoor=self.outdoor_temperature,
+                coil_raw=self.profile.blocks[COILS].value,
+                dinput_raw=self.profile.blocks[DISCRETE_INPUTS].value,
             )
             owned = {(INPUT_REGISTERS, a) for a in heating.INPUTS}
             self._drift = [d for d in self._drift if (d.spec.block, d.spec.address) not in owned]
@@ -236,6 +238,15 @@ class Emulator:
             elif block == HOLDING_REGISTERS and values is not None and self.apply_writes:
                 for offset, raw in enumerate(values):
                     self.heating.write(address + offset, raw & 0xFFFF)
+            elif block == COILS and values is not None and self.apply_writes:
+                for offset, bit in enumerate(values):
+                    self.heating.write_coil(address + offset, bool(bit))
+            elif block == DISCRETE_INPUTS:
+                for bit_address, on in self.heating.discrete_inputs().items():
+                    index = bit_address - start_address * 16
+                    word, bit = divmod(index, 16)
+                    if 0 <= word < len(registers):
+                        registers[word] = registers[word] | (1 << bit) if on else registers[word] & ~(1 << bit)
         if values is not None and not self.apply_writes:
             # Keep the current state: overwrite the incoming values with what is stored.
             if block in (COILS, DISCRETE_INPUTS):
@@ -249,7 +260,12 @@ class Emulator:
 
     def _has_heating_registers(self) -> bool:
         holding, inputs = self.profile.blocks[HOLDING_REGISTERS], self.profile.blocks[INPUT_REGISTERS]
-        return all(holding.implemented(a) for a in heating.HOLDING) and all(inputs.implemented(a) for a in heating.INPUTS)
+        return (
+            all(holding.implemented(a) for a in (*heating.HOLDING, heating.MODE_HC2, *heating.COOLING_HOLDING))
+            and all(inputs.implemented(a) for a in heating.INPUTS)
+            and self.profile.blocks[COILS].implemented(heating.ENABLE_PASSIVE_COOLING)
+            and self.profile.blocks[DISCRETE_INPUTS].implemented(heating.PASSIVE_COOLING_ACTIVE)
+        )
 
     def _initial(self, spec: DynamicRegister) -> int:
         raw = self.profile.blocks[spec.block].value(spec.address)

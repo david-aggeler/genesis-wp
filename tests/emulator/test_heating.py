@@ -146,3 +146,73 @@ async def test_without_dynamics_set_points_are_the_captured_values(start_emulato
     emu = await start_emulator(PROFILE_615)
     assert emu.heating is None
     assert (await read(emu))["input_system_supply_line_calculated_set_point"] == 29.02
+
+
+COOLING_READ = ["input_first_prioritised_demand", "dinput_indication_when_mixing_valve_1_is_producing_passive_cooling",
+                "input_desired_temperature_distribution_circuit_mix_valve_1", "input_mix_valve_1_supply_line_temperature"]
+
+
+async def write(emu, **values):
+    """Write-enabled client against the emulator only (design_decision-5); the real plant is never written."""
+    writer = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0, read_only=False)
+    try:
+        for name, value in values.items():
+            await writer.async_set(name, value)
+    finally:
+        await writer.close()
+
+
+async def read_cooling(emu):
+    client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
+    try:
+        return await client.async_update(only_registers=COOLING_READ)
+    finally:
+        await client.close()
+
+
+# DHF-REQ: genesis-wp/requirement-19  DHF-TEST: genesis-wp/ac-62
+async def test_writing_cool_mode_starts_passive_cooling(start_emulator):
+    emu = await dynamic(start_emulator, 8.75)
+    emu.step()
+    before = await read_cooling(emu)
+    assert before["input_first_prioritised_demand"] != "Passive cooling"
+    assert not before["dinput_indication_when_mixing_valve_1_is_producing_passive_cooling"]
+    await write(emu, coil_enable_passive_cooling=1, holding_selected_mode_mixing_valve_1=1)
+    emu.step()
+    after = await read_cooling(emu)
+    assert after["input_first_prioritised_demand"] == "Passive cooling"
+    assert after["dinput_indication_when_mixing_valve_1_is_producing_passive_cooling"]
+    assert after["input_desired_temperature_distribution_circuit_mix_valve_1"] == 21.0
+    emu.step(10)
+    later = await read_cooling(emu)
+    t32 = "input_mix_valve_1_supply_line_temperature"
+    assert abs(later[t32] - 21.0) < abs(before[t32] - 21.0)
+
+
+# DHF-REQ: genesis-wp/requirement-19  DHF-TEST: genesis-wp/ac-63
+@pytest.mark.parametrize("outdoor, cooling", [(24.0, False), (26.0, True)])
+async def test_auto_mode_cools_from_the_season_start(start_emulator, outdoor, cooling):
+    emu = await dynamic(start_emulator, outdoor, overrides={("coils", 33): 1})
+    assert emu.profile.blocks["holding_registers"].value(298) == 2  # captured: auto
+    assert emu.profile.blocks["holding_registers"].value(303) == 2500
+    emu.step()
+    demand = (await read_cooling(emu))["input_first_prioritised_demand"]
+    assert (demand == "Passive cooling") is cooling
+
+
+async def test_cool_mode_without_passive_cooling_enabled_keeps_heating(start_emulator):
+    emu = await dynamic(start_emulator, 26.0)
+    await write(emu, holding_selected_mode_mixing_valve_1=1)
+    emu.step()
+    assert (await read_cooling(emu))["input_first_prioritised_demand"] != "Passive cooling"
+
+
+async def test_switching_back_to_heat_restores_the_captured_state(start_emulator):
+    emu = await dynamic(start_emulator, 8.75, overrides={("coils", 33): 1, ("holding_registers", 298): 1})
+    emu.step()
+    assert (await read_cooling(emu))["input_first_prioritised_demand"] == "Passive cooling"
+    await write(emu, holding_selected_mode_mixing_valve_1=0)
+    emu.step()
+    data = await read_cooling(emu)
+    assert data["input_first_prioritised_demand"] == "Heat"
+    assert not data["dinput_indication_when_mixing_valve_1_is_producing_passive_cooling"]
