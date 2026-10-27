@@ -115,6 +115,8 @@ To present a plant with or without a module, switch library capabilities on or o
 
 With dynamics on, the emulator also runs a heating model: the HC1 set point (input 18) and the HC2 set point (input 147) follow their seven curve points (holding 6-12, 109-115) over the outdoor temperature (input 13), linearly and clamped to the supply limits; T33, the buffer and T32 follow with a lag, and the mixing valve stays open while the buffer is below the HC2 set point. Curve points written to the emulator take effect on the next step. `--outdoor-temperature -5` (or `outdoor_temperature=-5.0`) holds the outdoor temperature instead of letting it drift.
 
+The heating model also covers HC2's passive cooling, for testing a heat/cool switch against the emulator only (the real plant is never written). With coil 33 on and holding 298 at 1 (cool), or at 2 (auto) with the outdoor temperature at or above holding 303, HC2 cools toward holding 302: input 1 reports passive cooling and discrete input 245 turns on. A write-enabled test client changes these registers, and the emulator applies them on its next step.
+
 New firmware: capture a read-only probe, then convert it with `scripts/probe_to_profile.py`.
 
 ## Development
