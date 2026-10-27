@@ -85,10 +85,10 @@ async def test_mixing_circuit_present_when_coil_11_is_on(start_emulator):
     assert (await updated_client(emu)).capabilities["heating_circuit_2"].state == PRESENT
 
 
-async def test_coil_off_with_a_fitted_sensor_is_unknown(start_emulator):
+async def test_coil_off_with_a_fitted_sensor_is_installed_but_switched_off(start_emulator):
     emu = await start_emulator(PROFILE_615, overrides={("coils", 11): 0})
     hc2 = (await updated_client(emu)).capabilities["heating_circuit_2"]
-    assert hc2.state == UNKNOWN  # T32 still reads a temperature
+    assert (hc2.state, hc2.enabled) == (PRESENT, False)  # T32 still reads a temperature
 
 
 # DHF-REQ: genesis-wp/requirement-13  DHF-TEST: genesis-wp/ac-43
@@ -120,8 +120,11 @@ async def test_captured_plant_capabilities(start_emulator):
     emu = await start_emulator(PROFILE_615)
     states = {name: cap.state for name, cap in (await updated_client(emu)).capabilities.items()}
     assert {n for n, s in states.items() if s == PRESENT} == {"heating_circuit_2", "buffer_tank", "ksm"}
-    assert {n for n, s in states.items() if s == UNKNOWN} == {"smart_grid", "additional_heater"}
-    for name in ("hot_water", "pool", "active_cooling", "passive_cooling", "room_sensor", "electric_meter", "hot_gas_recovery"):
+    # Switched off without a sensor that proves absence: unknown, not absent (design_decision-2, 2026-10-27)
+    assert {n for n, s in states.items() if s == UNKNOWN} == {
+        "smart_grid", "additional_heater", "passive_cooling", "hot_gas_recovery", "cooling",
+    }
+    for name in ("hot_water", "pool", "active_cooling", "room_sensor", "electric_meter"):
         assert states[name] == ABSENT, name
 
 
@@ -158,12 +161,13 @@ def test_capability_state_before_any_update_is_unknown():
 
 
 # DHF-REQ: genesis-wp/requirement-18  DHF-TEST: genesis-wp/ac-59
-async def test_cooling_absent_on_the_captured_plant_and_gates_the_cooling_category(start_emulator):
+# DHF-REQ: genesis-wp/requirement-18  DHF-TEST: genesis-wp/ac-59
+async def test_cooling_on_the_captured_plant_gates_the_cooling_category(start_emulator):
     from genesis_wp import register_category
 
     emu = await start_emulator(PROFILE_615)
     cooling = (await updated_client(emu)).capabilities["cooling"]
-    assert cooling.state == ABSENT
+    assert cooling.state == UNKNOWN  # passive cooling switched off, not proven missing
     for name in ("coil_enable_outdoor_temp_dependent_for_cooling_with_mixing_valve_1",
                  "coil_enable_internal_brine_pump_to_start_when_cooling_is_active_for_mixing_valve_1",
                  "holding_set_point_for_supply_line_temp_passive_cooling_with_mixing_valve_1",
@@ -172,6 +176,33 @@ async def test_cooling_absent_on_the_captured_plant_and_gates_the_cooling_catego
         assert name in cooling.gates, name
     assert all(register_category(name) == "cooling" for name in cooling.gates)
     assert any("active_cooling = absent" in e for e in cooling.evidence)
+    overridden = await updated_client(emu, capability_overrides={"passive_cooling": ABSENT})
+    assert overridden.capabilities["cooling"].state == ABSENT
+
+
+# DHF-REQ: genesis-wp/requirement-13  DHF-TEST: genesis-wp/ac-64
+async def test_switched_off_module_is_switched_off_not_missing(start_emulator):
+    caps = (await updated_client(await start_emulator(PROFILE_615))).capabilities
+    assert (caps["passive_cooling"].state, caps["passive_cooling"].enabled) == (UNKNOWN, False)
+    assert (caps["hot_water"].state, caps["hot_water"].enabled) == (ABSENT, False)
+    assert (caps["heating_circuit_2"].state, caps["heating_circuit_2"].enabled) == (PRESENT, True)
+    assert caps["buffer_tank"].enabled is None  # no enable coil
+
+
+# DHF-REQ: genesis-wp/requirement-13  DHF-TEST: genesis-wp/ac-65
+async def test_passive_cooling_seen_running_stays_installed(start_emulator):
+    running = await start_emulator(PROFILE_615, overrides={("coils", 33): 1, ("discrete_inputs", 245): 1})
+    client = ThermiaGenesis(running.host, port=running.port, kind=running.profile.model, delay=0)
+    await client.async_update()
+    await client.close()
+    assert client.capabilities["passive_cooling"].state == PRESENT
+    off = await start_emulator(PROFILE_615)  # coil 33 = 0, DI 245 = 0
+    client._host, client._port = off.host, off.port
+    await client.async_update()
+    await client.close()
+    passive = client.capabilities["passive_cooling"]
+    assert (passive.state, passive.enabled) == (PRESENT, False)
+    assert "seen running in an earlier update" in passive.evidence
 
 
 async def test_cooling_unknown_when_a_member_is_unknown(start_emulator):

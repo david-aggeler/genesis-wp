@@ -71,8 +71,8 @@ async def test_selection_never_touches_the_packaged_profile(start_emulator):
 @pytest.mark.parametrize("name, on", [
     ("hot_water", True), ("hot_water", False), ("heating_circuit_2", True), ("heating_circuit_2", False),
     ("buffer_tank", True), ("buffer_tank", False), ("pool", True), ("pool", False),
-    ("active_cooling", True), ("active_cooling", False), ("passive_cooling", True), ("passive_cooling", False),
-    ("hot_gas_recovery", True), ("hot_gas_recovery", False), ("room_sensor", True), ("room_sensor", False),
+    ("active_cooling", True), ("active_cooling", False), ("passive_cooling", True),
+    ("hot_gas_recovery", True), ("room_sensor", True), ("room_sensor", False),
     ("electric_meter", True), ("electric_meter", False), ("smart_grid", True), ("additional_heater", True),
     ("ksm", True),
 ])
@@ -113,9 +113,10 @@ async def test_passive_cooling_on_makes_cooling_present(start_emulator):
     assert caps["cooling"].state == PRESENT
 
 
-async def test_cooling_off_switches_both_kinds_off(start_emulator):
-    emu = await start_emulator(PROFILE_615, capabilities={"cooling": False})
-    assert (await detected(emu)).capabilities["cooling"].state == ABSENT
+@pytest.mark.parametrize("name", ["passive_cooling", "hot_gas_recovery", "cooling"])
+def test_off_is_rejected_where_detection_cannot_show_absence(name):
+    with pytest.raises(CapabilityError, match="cannot be switched off"):
+        Emulator(get_profile(PROFILE_615), port=0, capabilities={name: False})
 
 
 def test_cooling_on_is_ambiguous():
