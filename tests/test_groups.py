@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from genesis_wp import register_category, register_concerns, register_group
+from genesis_wp import register_category, register_concerns, register_group, register_role
 from genesis_wp.const import MODEL_NAMES, MODEL_STIEBEL_WPE_I_071, REGISTERS
-from genesis_wp.groups import CATEGORIES, GROUP_CATEGORY, GROUPS, REGISTER_CATEGORIES, REGISTER_GROUPS
+from genesis_wp.groups import (
+    CATEGORIES, GROUP_CATEGORY, GROUPS, REGISTER_CATEGORIES, REGISTER_GROUPS, ROLE_ALARM, ROLE_MEASUREMENT, ROLE_SETTING, ROLES,
+)
 
 
 # DHF-REQ: genesis-wp/requirement-12  DHF-TEST: genesis-wp/ac-35
@@ -69,3 +71,22 @@ def test_concerns_is_none_outside_alarms_and_for_controller_wide_alarms():
     for name, group in REGISTER_GROUPS.items():
         concerned = register_concerns(name)
         assert concerned is None or concerned in GROUP_CATEGORY, name
+
+
+# DHF-REQ: genesis-wp/requirement-18  DHF-TEST: genesis-wp/ac-61
+@pytest.mark.parametrize("kind", list(MODEL_NAMES))
+def test_every_enabled_register_has_a_role(kind):
+    for name, meta in REGISTERS.items():
+        if meta[kind]:
+            assert register_role(name) in ROLES, name
+
+
+@pytest.mark.parametrize("name, role", [
+    ("dinput_mix_valve_1_supply_line_sensor_alarm", ROLE_ALARM),
+    ("holding_comfort_wheel_setting", ROLE_SETTING),
+    ("coil_enable_passive_cooling", ROLE_SETTING),
+    ("input_system_supply_line_temperature", ROLE_MEASUREMENT),
+    ("dinput_smart_grid_2", ROLE_MEASUREMENT),
+])
+def test_register_roles(name, role):
+    assert register_role(name) == role

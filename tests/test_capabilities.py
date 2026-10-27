@@ -155,3 +155,27 @@ def test_capability_state_before_any_update_is_unknown():
     assert client.capability_state("hot_water") == UNKNOWN
     with pytest.raises(ValueError):
         client.capability_state("sauna")
+
+
+# DHF-REQ: genesis-wp/requirement-18  DHF-TEST: genesis-wp/ac-59
+async def test_cooling_absent_on_the_captured_plant_and_gates_the_cooling_category(start_emulator):
+    from genesis_wp import register_category
+
+    emu = await start_emulator(PROFILE_615)
+    cooling = (await updated_client(emu)).capabilities["cooling"]
+    assert cooling.state == ABSENT
+    for name in ("coil_enable_outdoor_temp_dependent_for_cooling_with_mixing_valve_1",
+                 "coil_enable_internal_brine_pump_to_start_when_cooling_is_active_for_mixing_valve_1",
+                 "holding_set_point_for_supply_line_temp_passive_cooling_with_mixing_valve_1",
+                 "holding_set_point_minimum_outdoor_temp_when_cooling_is_permitted",
+                 "input_cooling_season_integral_value"):
+        assert name in cooling.gates, name
+    assert all(register_category(name) == "cooling" for name in cooling.gates)
+    assert any("active_cooling = absent" in e for e in cooling.evidence)
+
+
+async def test_cooling_unknown_when_a_member_is_unknown(start_emulator):
+    # coil 33 off while a passive-cooling indication is fitted is not modeled; override a member instead
+    emu = await start_emulator(PROFILE_615)
+    client = await updated_client(emu, capability_overrides={"passive_cooling": UNKNOWN})
+    assert client.capabilities["cooling"].state == UNKNOWN
