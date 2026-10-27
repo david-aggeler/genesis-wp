@@ -17,6 +17,8 @@ Alarms keep group ``alarms`` and also name the group whose sensor or process the
 
 from __future__ import annotations
 
+from .const import KEY_REG_TYPE, REG_COIL, REG_HOLDING, REGISTERS
+
 # Categories: the documents' reference codes (1 heating system, 2 hot water, 5 cooling, 6 pool,
 # 7 additional heating circuits, 8 buffer tank, 9 electric meter, 10 internal heat pump, 11 KSM).
 CATEGORY_HEATING_SYSTEM = "heating_system"
@@ -822,6 +824,23 @@ REGISTER_CATEGORIES = {
     "holding_selected_mode_mixing_valve_1": "controller",
     "holding_enabled_immersion_heater": "controller",
 }
+
+
+# Register roles (design_decision-4). A consumer maps them onto Home Assistant entity categories:
+# measurement -> none, setting -> config, alarm -> diagnostic.
+ROLE_MEASUREMENT = "measurement"
+ROLE_SETTING = "setting"
+ROLE_ALARM = "alarm"
+ROLES = (ROLE_MEASUREMENT, ROLE_SETTING, ROLE_ALARM)
+
+
+def register_role(name: str) -> str:
+    """alarm for the alarms group, setting for holding registers and coils, otherwise measurement."""
+    if REGISTER_GROUPS[name] == "alarms":
+        return ROLE_ALARM
+    if REGISTERS[name][KEY_REG_TYPE] in (REG_COIL, REG_HOLDING):
+        return ROLE_SETTING
+    return ROLE_MEASUREMENT
 
 
 def register_group(name: str) -> str:

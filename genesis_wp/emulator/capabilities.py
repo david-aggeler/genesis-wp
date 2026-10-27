@@ -80,6 +80,17 @@ def selection_overrides(profile: Profile, selection: Mapping[str, bool]) -> tupl
             raise CapabilityError(f"unknown capability {name!r}; known: {', '.join(lib.CAPABILITY_NAMES)}")
         if not lib.gated_registers(rule, kind):
             raise CapabilityError(f"capability {name!r}: model {kind} has no registers for it")
+        if rule.rule == lib.RULE_ANY_OF:
+            if on:
+                raise CapabilityError(
+                    f"capability {name!r} combines {' or '.join(rule.members)}; switch on one of those instead"
+                )
+            # Off: every member off (members the model lacks are absent already).
+            members = {m: False for m in rule.members if lib.gated_registers(_rule(m), kind)}
+            sub, sub_notes = selection_overrides(profile, members)
+            overrides.update(sub)
+            notes.extend(sub_notes)
+            continue
         changes = _module(rule, kind, on, profile) if rule.rule == lib.RULE_MODULE else _special(rule, kind, on)
         synthetic = []
         for register, raw in changes.items():
@@ -92,6 +103,10 @@ def selection_overrides(profile: Profile, selection: Mapping[str, bool]) -> tupl
             f"capability selection {name}={state} (synthetic, not captured): {', '.join(synthetic) or 'no value changed'}"
         )
     return overrides, notes
+
+
+def _rule(name: str) -> lib.CapabilityRule:
+    return next(r for r in lib.CAPABILITY_RULES if r.name == name)
 
 
 def _module(rule: lib.CapabilityRule, kind: str, on: bool, profile: Profile) -> dict[str, int]:

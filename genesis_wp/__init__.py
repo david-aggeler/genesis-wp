@@ -22,7 +22,7 @@ from modbus_connection import (
 from .const import *
 from . import capabilities as _capabilities
 from .capabilities import ABSENT, PRESENT, UNKNOWN, Capability
-from .groups import register_category, register_concerns, register_group
+from .groups import register_category, register_concerns, register_group, register_role
 
 _LOGGER = logging.getLogger(__name__)
 

@@ -102,3 +102,22 @@ def test_parse_selection():
 def test_cli_exits_non_zero_on_a_bad_capability(capsys):
     assert main(["--capability", "heating_circuit_4=on"]) == 2
     assert "has no registers" in capsys.readouterr().err
+
+
+# DHF-REQ: genesis-wp/requirement-18  DHF-TEST: genesis-wp/ac-60
+async def test_passive_cooling_on_makes_cooling_present(start_emulator):
+    emu = await start_emulator(PROFILE_615, capabilities={"passive_cooling": True})
+    caps = (await detected(emu)).capabilities
+    assert caps["passive_cooling"].state == PRESENT
+    assert caps["active_cooling"].state == ABSENT
+    assert caps["cooling"].state == PRESENT
+
+
+async def test_cooling_off_switches_both_kinds_off(start_emulator):
+    emu = await start_emulator(PROFILE_615, capabilities={"cooling": False})
+    assert (await detected(emu)).capabilities["cooling"].state == ABSENT
+
+
+def test_cooling_on_is_ambiguous():
+    with pytest.raises(CapabilityError, match="active_cooling or passive_cooling"):
+        Emulator(get_profile(PROFILE_615), port=0, capabilities={"cooling": True})

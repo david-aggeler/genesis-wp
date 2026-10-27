@@ -20,7 +20,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .const import KEY_ADDRESS, KEY_NOT_FITTED, KEY_REG_TYPE, REGISTERS
-from .groups import REGISTER_GROUPS, register_concerns
+from .groups import REGISTER_GROUPS, register_category, register_concerns
 
 PRESENT = "present"
 ABSENT = "absent"
@@ -33,6 +33,7 @@ RULE_BUILT_IN = "built_in"  # part of every unit of a model that has its registe
 RULE_ANY_POSITIVE = "any_positive"  # present if any signal is above 0, absent if all read 0
 RULE_ANY_SET = "any_set"  # present if any signal is non-zero, else unknown
 RULE_SEEN_NONZERO = "seen_nonzero"  # unknown until a signal is seen non-zero, then present for the client's lifetime
+RULE_ANY_OF = "any_of"  # combined: present if any member is present, absent if all are absent, else unknown
 
 
 @dataclass(frozen=True)
@@ -42,6 +43,10 @@ class CapabilityRule:
     name: str
     #: Groups whose registers (and the alarms concerning them) the capability gates.
     groups: tuple[str, ...] = ()
+    #: Categories whose registers the capability gates (design_decision-4).
+    categories: tuple[str, ...] = ()
+    #: Member capabilities (RULE_ANY_OF).
+    members: tuple[str, ...] = ()
     rule: str = RULE_MODULE
     #: Enable coil (RULE_MODULE).
     enable: str | None = None
@@ -98,6 +103,7 @@ CAPABILITY_RULES = (
         sensors=("input_cooling_circuit_supply_line_temperature",), exclude=("passive",),
     ),
     CapabilityRule("passive_cooling", enable="coil_enable_passive_cooling", include=("passive",)),
+    CapabilityRule("cooling", categories=("cooling",), rule=RULE_ANY_OF, members=("active_cooling", "passive_cooling")),
     CapabilityRule(
         "room_sensor", sensors=("input_room_temperature_sensor",),
         include=("room_temperature_sensor", "room_sensor"),
@@ -133,6 +139,7 @@ def gated_registers(rule: CapabilityRule, kind: str) -> tuple[str, ...]:
         if (
             group in rule.groups
             or register_concerns(name) in rule.groups
+            or register_category(name) in rule.categories
             or any(fragment in name for fragment in rule.include)
             or name == rule.enable
         ):
@@ -215,6 +222,11 @@ def evaluate(
         elif rule.rule == RULE_ANY_SET:
             values, evidence = _signals(rule, kind, data)
             state = PRESENT if any(values) else UNKNOWN
+        elif rule.rule == RULE_ANY_OF:
+            members = {m: result[m].state if m in result else ABSENT for m in rule.members}  # members precede it
+            evidence = [f"{m} = {s}" for m, s in members.items()]
+            states = set(members.values())
+            state = PRESENT if PRESENT in states else ABSENT if states == {ABSENT} else UNKNOWN
         elif rule.rule == RULE_SEEN_NONZERO:
             values, evidence = _signals(rule, kind, data)
             if any(values):
