@@ -18,7 +18,7 @@ Every register the WPE-I model reads declares where it comes from, per model (`K
 
 ### Groups and categories
 
-Every register a model enables has a group (the vendor document section, for example `heating_circuit_2`, `brine_circuit`, `power_consumption_control`) and a category (the documents' reference code, for example `additional_heating_circuits`). Read them with `register_group(name)` and `register_category(name)`; an alarm also names the group it concerns, `register_concerns(name)`. The tables are in `genesis_wp/groups.py`.
+Every register a model enables has a group (the vendor document section, for example `heating_circuit_2`, `brine_circuit`, `power_consumption_control`) and a category (the reference code printed on the register's document row, for example `cooling` for the HC2 cooling settings; registers without a Genesis 17 document row take their group's category). Read them with `register_group(name)` and `register_category(name)`; an alarm also names the group it concerns, `register_concerns(name)`. The tables are in `genesis_wp/groups.py`.
 
 ### Plant capabilities
 
