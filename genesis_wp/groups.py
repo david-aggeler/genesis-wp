@@ -827,7 +827,8 @@ REGISTER_CATEGORIES = {
 
 
 # Register roles (design_decision-4). A consumer maps them onto Home Assistant entity categories:
-# measurement -> none, setting -> config, alarm -> diagnostic.
+# measurement -> none, alarm -> diagnostic, setting -> diagnostic (or none) while read-only and config only
+# for writable entities (Home Assistant refuses config on sensor and binary_sensor).
 ROLE_MEASUREMENT = "measurement"
 ROLE_SETTING = "setting"
 ROLE_ALARM = "alarm"
