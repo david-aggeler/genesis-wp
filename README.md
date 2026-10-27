@@ -28,6 +28,8 @@ The controller has no "installed modules" register. After each update, `client.c
 
 `client.data` keeps raw values. For enumerated registers with documented values, `client.labels[name]` is an `EnumValue(raw, label)`: the SG Ready mode (holding 124: `normal`, `load_up`, `utility_block`, `maximum`) and the smart-grid state (input 82: `utility_block`, `normal`, `comfort`, `maximum`). A value without a documented label has `label=None` and is logged, never mapped to a neighbor.
 
+The demand registers (inputs 1, 55, 56, 62-66) decode to strings such as `Heat` or `No demand`. On the Genesis 17 models (WPE-I, Calibra RXT) they follow the documents' value table, including `Passive cooling` (8) and `OFF` (100), and carry a `client.labels` entry; an undocumented value is reported as its raw number. Legacy models keep the upstream decoding.
+
 ### Read-only by default
 
 A client refuses every write (`async_set`) with `GenesisReadOnlyError` before anything is sent to the heat pump. To write, construct it with `read_only=False`; the setting cannot be changed afterwards. Writes go straight to the controller of a real heating plant without any bounds check yet, so only opt in when you mean it.
