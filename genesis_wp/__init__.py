@@ -105,6 +105,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         # Plant capabilities after the last update (requirement-13), and enum labels (requirement-16).
         self.capabilities: dict[str, Capability] = {}
         self.labels: dict[str, EnumValue] = {}
+        self._enum_raw: dict = {}  # raw values of registers decoded to a label during the last read
         self._capability_overrides = _capabilities.validate_overrides(capability_overrides)
         self._capabilities_seen: set[str] = set()
         self._unit = unit
@@ -223,6 +224,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             table = REGISTERS[name].get(KEY_ENUM, {}).get(self._kind)
             if table is None or value is None:
                 continue
+            value = self._enum_raw.get(name, value)  # registers already decoded to their label
             label = table.get(value)
             if label is None:
                 _LOGGER.warning("%s: raw value %s has no documented label", name, value)
@@ -382,6 +384,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
 
         unit = await self._ensure_unit()
         self.unread = set()
+        self._enum_raw = {}
         failure = None
         try:
             for chunk in chunks:
@@ -427,6 +430,10 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
                                 val = 0
                             if val > 32767:
                                 val = val - 65536
+                        elif datatype == TYPE_STATUS and info.get(KEY_ENUM, {}).get(self._kind) is not None:
+                            # Documented demand values (issue-10); an undocumented one stays raw.
+                            self._enum_raw[name] = val
+                            val = info[KEY_ENUM][self._kind].get(val, val)
                         elif datatype == TYPE_STATUS:
                             status_str = "OFF"
                             if val == 1:
