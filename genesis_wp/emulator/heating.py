@@ -16,6 +16,9 @@ Passive cooling (requirement-19, design_decision-5): with coil 33 on and HC2's m
 cooling season start (holding 303), HC2 cools. Its target (input 147) is then holding 302, T32
 follows it, the valve is fully open, input 1 reports 8 (passive cooling) and discrete input 245
 is on. Modeled from the Stiebel document, not yet observed on the plant.
+
+A sensor the served profile has as not fitted (a capability switched off) is left alone: the
+model does not serve it, and without the buffer sensor T32 is capped at T33 (issue-12).
 """
 
 from __future__ import annotations
@@ -93,13 +96,16 @@ class HeatingModel:
     mode_hc2: int = 0
     demand_raw: int = 0
     indication_raw: int = 0
+    #: Input addresses whose sensor is not fitted; the model never serves them.
+    not_fitted: frozenset[int] = frozenset()
     _start_outdoor: float = field(init=False)
 
     def __post_init__(self) -> None:
         self._start_outdoor = self.outdoor
 
     @classmethod
-    def from_values(cls, holding_raw, input_raw, outdoor: float | None = None, coil_raw=None, dinput_raw=None) -> HeatingModel:
+    def from_values(cls, holding_raw, input_raw, outdoor: float | None = None, coil_raw=None, dinput_raw=None,
+                    not_fitted=frozenset()) -> HeatingModel:
         """Build from raw block values (callables address -> raw); ``outdoor`` holds it."""
         value = lambda read, a: _signed(read(a)) / SCALE  # noqa: E731
         coil_raw = coil_raw or (lambda a: 0)
@@ -116,6 +122,7 @@ class HeatingModel:
             t31=value(input_raw, T31),
             valve=value(input_raw, VALVE),
             hold_outdoor=outdoor is not None,
+            not_fitted=frozenset(not_fitted),
         )
 
     @property
@@ -167,9 +174,10 @@ class HeatingModel:
             self.t32 += LAG_SUPPLY * (target_hc2 - self.t32)
             self.valve = 100.0
             return
-        self.t32 += LAG_SUPPLY * (min(target_hc2, self.t31) - self.t32)
+        source = self.t33 if T31 in self.not_fitted else self.t31
+        self.t32 += LAG_SUPPLY * (min(target_hc2, source) - self.t32)
         # Fully open while the buffer cannot reach the HC2 set point; otherwise close 10 %/K above it.
-        self.valve = 100.0 if self.t31 <= target_hc2 else max(0.0, 100.0 - 10.0 * (self.t31 - target_hc2))
+        self.valve = 100.0 if source <= target_hc2 else max(0.0, 100.0 - 10.0 * (source - target_hc2))
 
     def inputs(self) -> dict[int, int]:
         """Raw input register values (unsigned 16-bit) the model owns."""
@@ -182,7 +190,7 @@ class HeatingModel:
             VALVE: self.valve,
             SET_POINT_HC2: self.set_point_hc2,
         }
-        raw = {a: round(v * SCALE) & 0xFFFF for a, v in values.items()}
+        raw = {a: round(v * SCALE) & 0xFFFF for a, v in values.items() if a not in self.not_fitted}
         raw[DEMAND] = DEMAND_PASSIVE_COOLING if self.cooling else self.demand_raw
         return raw
 

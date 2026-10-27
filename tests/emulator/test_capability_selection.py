@@ -81,6 +81,16 @@ async def test_every_selectable_capability_is_detected_as_selected(start_emulato
     assert (await detected(emu)).capabilities[name].state == (PRESENT if on else ABSENT)
 
 
+@pytest.mark.parametrize("name", ["hot_water", "heating_circuit_2", "buffer_tank", "pool", "active_cooling", "room_sensor",
+                                  "electric_meter"])
+async def test_switched_off_modules_stay_absent_with_dynamics(start_emulator, name):
+    """Dynamics never tick a sensor the selection set to not fitted (issue-12)."""
+    emu = await start_emulator(PROFILE_615, capabilities={name: False}, dynamics=True)
+    for _ in range(3):
+        emu.step(5)
+        assert (await detected(emu)).capabilities[name].state == ABSENT
+
+
 @pytest.mark.parametrize("selection, message", [
     ({"sauna": True}, "unknown capability"),
     ({"heating_circuit_3": True}, "has no registers"),
