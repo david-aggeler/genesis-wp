@@ -114,6 +114,11 @@ def _module(rule: lib.CapabilityRule, kind: str, on: bool, profile: Profile) -> 
     if _enabled(rule.enable, kind):
         changes[rule.enable] = int(on)
     sensors = [s for s in rule.sensors if _enabled(s, kind) and REGISTERS[s].get(KEY_NOT_FITTED, {}).get(kind) is not None]
+    if not on and not sensors:
+        # An enable coil that is off means switched off, not missing (design_decision-2).
+        raise CapabilityError(
+            f"capability {rule.name!r} cannot be switched off: no sensor proves its absence, so detection reports unknown"
+        )
     if not changes and not sensors:
         raise CapabilityError(f"capability {rule.name!r}: model {kind} has no enable coil or declared sensor to present it")
     for sensor in sensors:

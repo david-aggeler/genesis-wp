@@ -5,10 +5,14 @@ each capability is decided by an evidence rule over read-only values (function c
 
 1. Model support: a model without registers for the module does not report it
    (:func:`capability_state` answers absent).
-2. The module's enable coil, set at commissioning: off means absent, unless a fitted
-   sensor contradicts it, then unknown.
-3. Its sensors, where the model declares a "not fitted" sentinel: all not fitted means
-   absent, any fitted means present. A sensor without a declared sentinel is no evidence.
+2. Its sensors, where the model declares a "not fitted" sentinel: any fitted means present,
+   all not fitted means absent. A sensor without a declared sentinel is no evidence.
+3. Otherwise its enable coil: on means present (a commissioner enables only fitted modules).
+   Off means switched off, not missing (design_decision-2, revised 2026-10-27).
+4. Otherwise a running signal seen during the client's lifetime means present; else unknown.
+
+``Capability.enabled`` reports the enable coil separately: installed and switched on are
+different questions.
 
 Some modules have their own rule (see :data:`CAPABILITY_RULES`). A consumer may override
 any capability; the library never writes to the device to find out.
@@ -47,6 +51,8 @@ class CapabilityRule:
     categories: tuple[str, ...] = ()
     #: Member capabilities (RULE_ANY_OF).
     members: tuple[str, ...] = ()
+    #: Signals that prove the module operates (RULE_MODULE); once seen, present for the client's lifetime.
+    running: tuple[str, ...] = ()
     rule: str = RULE_MODULE
     #: Enable coil (RULE_MODULE).
     enable: str | None = None
@@ -70,6 +76,8 @@ class Capability:
     #: Registers enabled for the model that belong to this capability.
     gates: tuple[str, ...]
     overridden: bool = False
+    #: Switched on: the module's enable coil (None when it has none or it was not read).
+    enabled: bool | None = None
 
 
 CAPABILITY_RULES = (
@@ -102,7 +110,10 @@ CAPABILITY_RULES = (
         "active_cooling", groups=("cooling",), enable="coil_enable_active_cooling",
         sensors=("input_cooling_circuit_supply_line_temperature",), exclude=("passive",),
     ),
-    CapabilityRule("passive_cooling", enable="coil_enable_passive_cooling", include=("passive",)),
+    CapabilityRule(
+        "passive_cooling", enable="coil_enable_passive_cooling", include=("passive",),
+        running=("dinput_indication_when_mixing_valve_1_is_producing_passive_cooling",),
+    ),
     CapabilityRule("cooling", categories=("cooling",), rule=RULE_ANY_OF, members=("active_cooling", "passive_cooling")),
     CapabilityRule(
         "room_sensor", sensors=("input_room_temperature_sensor",),
@@ -167,7 +178,7 @@ def _evidence(name: str, data: Mapping) -> str:
     return f"{_ref(name)} = {value}"
 
 
-def _module(rule: CapabilityRule, kind: str, data: Mapping) -> tuple[str, list[str]]:
+def _module(rule: CapabilityRule, kind: str, data: Mapping, seen: set[str]) -> tuple[str, list[str], bool | None]:
     evidence = []
     coil = None
     if _enabled(rule.enable, kind):
@@ -181,11 +192,17 @@ def _module(rule: CapabilityRule, kind: str, data: Mapping) -> tuple[str, list[s
         evidence.append(_evidence(sensor, data))
         if sensor in data:
             fitted.append(data[sensor] is not None)
-    if coil is False:
-        return (UNKNOWN if any(fitted) else ABSENT), evidence
+    running = [name for name in rule.running if _enabled(name, kind)]
+    if any(data.get(name) for name in running):
+        seen.add(rule.name)  # recorded whatever decides the state now, so it holds after switch-off
     if fitted:
-        return (PRESENT if any(fitted) else ABSENT), evidence
-    return (PRESENT if coil else UNKNOWN), evidence
+        return (PRESENT if any(fitted) else ABSENT), evidence, coil
+    if coil:
+        return PRESENT, evidence, coil
+    evidence.extend(_evidence(name, data) for name in running)
+    if rule.name in seen and not any(data.get(name) for name in running):
+        evidence.append("seen running in an earlier update")
+    return (PRESENT if rule.name in seen else UNKNOWN), evidence, coil
 
 
 def _signals(rule: CapabilityRule, kind: str, data: Mapping) -> tuple[list, list[str]]:
@@ -212,8 +229,9 @@ def evaluate(
         gates = gated_registers(rule, kind)
         if not gates:
             continue
+        enabled = None
         if rule.rule == RULE_MODULE:
-            state, evidence = _module(rule, kind, data)
+            state, evidence, enabled = _module(rule, kind, data, seen)
         elif rule.rule == RULE_BUILT_IN:
             state, evidence = PRESENT, [f"built into every {kind} unit ({len(gates)} registers)"]
         elif rule.rule == RULE_ANY_POSITIVE:
@@ -242,7 +260,7 @@ def evaluate(
         if overridden:
             evidence = [f"overridden by the consumer to {overrides[rule.name]} (detected {state})", *evidence]
             state = overrides[rule.name]
-        result[rule.name] = Capability(rule.name, state, tuple(evidence), gates, overridden)
+        result[rule.name] = Capability(rule.name, state, tuple(evidence), gates, overridden, enabled)
     return result
 
 
