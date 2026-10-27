@@ -29,6 +29,7 @@ from pymodbus.pdu import ExceptionResponse, ModbusPDU
 from pymodbus.server import ModbusTcpServer
 from pymodbus.simulator import DataType, SimData, SimDevice
 
+from ..const import KEY_ADDRESS, KEY_NOT_FITTED, KEY_REG_TYPE, REG_INPUT, REGISTERS
 from . import heating
 from .capabilities import selection_overrides
 from .profile import (
@@ -129,7 +130,13 @@ class Emulator:
         if self.overrides:
             self.profile = self.profile.with_overrides(self.overrides)
         self._rng = random.Random(self.seed)
-        self._drift = [_Drift(d, self._initial(d)) for d in self.profile.dynamics] if self.dynamics else []
+        # A sensor served as not fitted stays so: dynamics never tick it (issue-12).
+        not_fitted = self._not_fitted_inputs()
+        self._drift = [
+            _Drift(d, self._initial(d))
+            for d in self.profile.dynamics
+            if not (d.block == INPUT_REGISTERS and d.address in not_fitted)
+        ] if self.dynamics else []
         self.heating: heating.HeatingModel | None = None
         if self.dynamics and self._has_heating_registers():
             self.heating = heating.HeatingModel.from_values(
@@ -138,6 +145,7 @@ class Emulator:
                 outdoor=self.outdoor_temperature,
                 coil_raw=self.profile.blocks[COILS].value,
                 dinput_raw=self.profile.blocks[DISCRETE_INPUTS].value,
+                not_fitted=not_fitted,
             )
             owned = {(INPUT_REGISTERS, a) for a in heating.INPUTS}
             self._drift = [d for d in self._drift if (d.spec.block, d.spec.address) not in owned]
@@ -266,6 +274,17 @@ class Emulator:
             and self.profile.blocks[COILS].implemented(heating.ENABLE_PASSIVE_COOLING)
             and self.profile.blocks[DISCRETE_INPUTS].implemented(heating.PASSIVE_COOLING_ACTIVE)
         )
+
+    def _not_fitted_inputs(self) -> frozenset[int]:
+        """Input addresses whose served raw value is the model's not-fitted sentinel."""
+        inputs = self.profile.blocks[INPUT_REGISTERS]
+        addresses = set()
+        for meta in REGISTERS.values():
+            sentinel = meta.get(KEY_NOT_FITTED, {}).get(self.profile.model)
+            if meta[KEY_REG_TYPE] == REG_INPUT and sentinel is not None and inputs.implemented(meta[KEY_ADDRESS]):
+                if inputs.value(meta[KEY_ADDRESS]) == sentinel:
+                    addresses.add(meta[KEY_ADDRESS])
+        return frozenset(addresses)
 
     def _initial(self, spec: DynamicRegister) -> int:
         raw = self.profile.blocks[spec.block].value(spec.address)

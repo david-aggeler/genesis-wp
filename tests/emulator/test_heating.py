@@ -216,3 +216,19 @@ async def test_switching_back_to_heat_restores_the_captured_state(start_emulator
     data = await read_cooling(emu)
     assert data["input_first_prioritised_demand"] == "Heat"
     assert not data["dinput_indication_when_mixing_valve_1_is_producing_passive_cooling"]
+
+
+async def test_without_a_buffer_sensor_hc2_follows_its_set_point_up_to_t33(start_emulator):
+    """With T31 not fitted, the mixer is capped by the system supply (issue-12)."""
+    emu = await dynamic(start_emulator, 5.0, overrides=curves(), capabilities={"buffer_tank": False})
+    emu.step(60)
+    client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
+    try:
+        data = await client.async_update(only_registers=[*NAMES, "input_buffer_tank_temperature",
+                                                         "input_mix_valve_1_supply_line_temperature"])
+    finally:
+        await client.close()
+    assert data["input_buffer_tank_temperature"] is None
+    hc2 = data["input_desired_temperature_distribution_circuit_mix_valve_1"]
+    assert data["input_mix_valve_1_supply_line_temperature"] == pytest.approx(
+        min(hc2, data["input_system_supply_line_temperature"]), abs=0.05)
