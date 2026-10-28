@@ -128,6 +128,14 @@ genesis-wp-climate build --latitude 47.37 --longitude 8.54 --bucket week -o clim
 
 The file carries the coordinates, so keep the one for your home out of version control; nothing logs them.
 
+Play it back with dynamics on: the emulator keeps a simulated clock that advances by the playback speed (simulated seconds per real second) and serves the profile value of the simulated month (or week) and hour as the outdoor temperature (input 13), held for the whole hour. One model step is one simulated minute, so the plant responds the same at any speed. A held outdoor temperature still wins.
+
+```sh
+genesis-wp-emulator --dynamics --interval 1 --climate climate.json --start 2026-01-15T06:00 --speed 60   # 1 h per minute
+```
+
+In Python: `Emulator(..., dynamics=True, climate=ClimateProfile.load("climate.json"), start_time=..., playback_speed=60)`, then `emu.simulated_time`, `emu.set_playback_speed(3600)`, and `emu.advance(seconds)` to jump ahead.
+
 New firmware: capture a read-only probe, then convert it with `scripts/probe_to_profile.py`.
 
 ## Development

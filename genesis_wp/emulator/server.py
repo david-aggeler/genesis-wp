@@ -23,6 +23,7 @@ import random
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timedelta
 
 from pymodbus.constants import ExcCodes
 from pymodbus.pdu import ExceptionResponse, ModbusPDU
@@ -32,6 +33,7 @@ from pymodbus.simulator import DataType, SimData, SimDevice
 from ..const import KEY_ADDRESS, KEY_NOT_FITTED, KEY_REG_TYPE, REG_INPUT, REGISTERS
 from . import heating
 from .capabilities import selection_overrides
+from .climate import ClimateProfile
 from .profile import (
     BLOCKS,
     COILS,
@@ -118,6 +120,12 @@ class Emulator:
     outdoor_temperature: float | None = None
     #: Start the HC2 room set point [°C] here instead of at the profile's initial value; applied as a change.
     initial_room_set_point_hc2: float | None = None
+    #: Climate profile to play back as outdoor temperature on a simulated clock (needs dynamics).
+    climate: ClimateProfile | None = None
+    #: Simulated start date and time; default now, local, to the minute.
+    start_time: datetime | None = None
+    #: Simulated seconds per real second.
+    playback_speed: float = 1.0
 
     requests: list[Request] = field(default_factory=list, init=False)
     faults: list[Fault] = field(default_factory=list, init=False)
@@ -161,6 +169,16 @@ class Emulator:
                 # A stopped compressor stays stopped; the drift would put its speed back in range.
                 owned.add((INPUT_REGISTERS, heating.SPEED))
             self._drift = [d for d in self._drift if (d.spec.block, d.spec.address) not in owned]
+        # Simulated clock (requirement-22): only with a climate profile, which needs the heating model.
+        self._clock: datetime | None = None
+        self._carry = 0.0  # simulated seconds not yet run as a whole step
+        if self.climate is not None:
+            if not self.dynamics or self.heating is None:
+                raise ValueError("a climate profile needs dynamics and a profile with the heating registers")
+            self._check_speed(self.playback_speed)
+            self._clock = self.start_time or datetime.now().replace(second=0, microsecond=0)
+            self.heating.walk_outdoor = False
+            self._feed_outdoor()
         self._server: ModbusTcpServer | None = None
         self._ticker: asyncio.Task | None = None
 
@@ -197,6 +215,44 @@ class Emulator:
             raise ProfileError(f"profile {self.profile.name} has no room_set_points rule for hc2")
         shift = self.heating.set_room_set_point("hc2", float(celsius))
         _LOGGER.info("HC2 room set point %.1f °C, curve shift %+d K", celsius, shift)
+
+    @property
+    def simulated_time(self) -> datetime | None:
+        """Simulated date and time; None without a climate profile."""
+        return self._clock
+
+    def set_playback_speed(self, speed: float) -> None:
+        """Simulated seconds per real second; takes effect on the next tick."""
+        self._check_speed(speed)
+        self.playback_speed = float(speed)
+        _LOGGER.info("playback speed %g", speed)
+
+    def play(self, real_seconds: float) -> None:
+        """Advance the simulated clock by ``real_seconds`` at the playback speed."""
+        self.advance(real_seconds * self.playback_speed)
+
+    def advance(self, simulated_seconds: float) -> None:
+        """Advance the simulated clock, one model step per whole simulated minute; the rest carries over."""
+        if self._clock is None:
+            raise RuntimeError("no simulated clock: load a climate profile")
+        self._carry += simulated_seconds
+        steps = int(self._carry // heating.STEP_SECONDS)
+        self._carry -= steps * heating.STEP_SECONDS
+        if steps > 10_000:
+            _LOGGER.warning("one advance runs %d steps; lower the playback speed or the tick interval", steps)
+        for _ in range(steps):
+            self._clock += timedelta(seconds=heating.STEP_SECONDS)
+            self._feed_outdoor()
+            self.step()
+
+    def _feed_outdoor(self) -> None:
+        if not self.heating.hold_outdoor:
+            self.heating.outdoor = self.climate.value_at(self._clock)
+
+    @staticmethod
+    def _check_speed(speed: float) -> None:
+        if not speed > 0:
+            raise ValueError(f"playback speed must be > 0, got {speed}")
 
     def step(self, steps: int = 1) -> None:
         """Advance plant dynamics by ``steps``. No-op when dynamics are off."""
@@ -329,7 +385,10 @@ class Emulator:
     async def _tick(self) -> None:
         while True:
             await asyncio.sleep(self.dynamics_interval)
-            self.step()
+            if self._clock is not None:
+                self.play(self.dynamics_interval)
+            else:
+                self.step()
 
     def _trace_connect(self, connecting: bool) -> None:
         if connecting:
