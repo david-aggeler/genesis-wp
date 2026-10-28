@@ -8,6 +8,7 @@ Examples::
     genesis-wp-emulator --capability hot_water=on --capability heating_circuit_2=off
     genesis-wp-emulator --dynamics --outdoor-temperature -5
     genesis-wp-emulator --room-set-point-hc2 22.5
+    genesis-wp-emulator --dynamics --interval 1 --climate climate.json --start 2026-01-15T06:00 --speed 60
     genesis-wp-emulator --list-profiles
 """
 
@@ -18,8 +19,11 @@ import asyncio
 import logging
 import signal
 import sys
+from datetime import datetime
+from pathlib import Path
 
 from .capabilities import parse_selection
+from .climate import ClimateError, ClimateProfile
 from .profile import ProfileError, get_profile, packaged_profiles
 from .server import Emulator
 
@@ -66,6 +70,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="start the HC2 room set point here; shifts the HC2 curve like the plant does. "
         "Emulator only: the WPE-I has no register for it",
     )
+    parser.add_argument(
+        "--climate", type=Path, metavar="FILE",
+        help="with --dynamics: play this climate profile (genesis-wp-climate build) as outdoor temperature "
+        "on a simulated clock",
+    )
+    parser.add_argument(
+        "--start", type=datetime.fromisoformat, metavar="ISO-DATETIME",
+        help="with --climate: simulated start, e.g. 2026-01-15T06:00 (default now)",
+    )
+    parser.add_argument(
+        "--speed", type=float, default=1.0,
+        help="with --climate: simulated seconds per real second, e.g. 60 = one hour per minute (default 1)",
+    )
     parser.add_argument("--ignore-writes", action="store_true", help="record writes but do not apply them")
     parser.add_argument("--list-profiles", action="store_true", help="list packaged profiles and exit")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="-v: requests, -vv: pymodbus debug")
@@ -74,6 +91,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 async def _run(args: argparse.Namespace) -> None:
     specs = args.instance or [(DEFAULT_PROFILE, None)]
+    climate = ClimateProfile.load(args.climate) if args.climate else None
     emulators = []
     next_port = args.port
     for name, port in specs:
@@ -90,6 +108,9 @@ async def _run(args: argparse.Namespace) -> None:
             capabilities=args.selection,
             outdoor_temperature=args.outdoor_temperature,
             initial_room_set_point_hc2=args.room_set_point_hc2,
+            climate=climate,
+            start_time=args.start,
+            playback_speed=args.speed,
         ))
     for emu in emulators:
         await emu.start()
@@ -97,6 +118,9 @@ async def _run(args: argparse.Namespace) -> None:
         for note in emu.profile.source.get("notes", []):
             if note.startswith("capability selection"):
                 print(f"  {note}", flush=True)
+        if emu.simulated_time is not None:
+            print(f"  climate {climate.bucket} profile, simulated start {emu.simulated_time:%Y-%m-%d %H:%M}, "
+                  f"speed {emu.playback_speed:g}", flush=True)
 
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -124,7 +148,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args.selection = parse_selection(args.capability)
         asyncio.run(_run(args))
-    except ProfileError as exc:
+    except (ProfileError, ClimateError) as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    except ValueError as exc:  # for example --climate without --dynamics, or --speed 0
         print(f"error: {exc}", file=sys.stderr)
         return 2
     except OSError as exc:

@@ -95,6 +95,10 @@ COP_AT_REFERENCE = 5.44  # at the reference lift
 COP_PER_K = 0.160  # COP lost per K of lift
 REFERENCE_LIFT = 29.8  # [K]
 
+#: One model step is one simulated minute; the lags below are rates per simulated minute, so a
+#: simulated clock runs whole steps and the plant response does not depend on playback speed
+#: (requirement-22).
+STEP_SECONDS = 60
 LAG_SUPPLY = 0.2  # fraction of the gap a supply temperature closes per step
 LAG_BUFFER = 0.05
 OUTDOOR_STEP = 0.02  # [K] per step, random walk
@@ -137,6 +141,8 @@ class HeatingModel:
     t32: float
     t31: float
     hold_outdoor: bool = False
+    #: Random-walk the outdoor temperature each step; off while a climate profile sets it.
+    walk_outdoor: bool = True
     #: Passive cooling inputs (raw): coil 33, holding 298, and the captured input 1 / DI 245 to restore.
     passive_enabled: bool = False
     mode_hc2: int = 0
@@ -270,7 +276,7 @@ class HeatingModel:
             self.passive_enabled = bool(on)
 
     def step(self, rng: random.Random) -> None:
-        if not self.hold_outdoor:
+        if not self.hold_outdoor and self.walk_outdoor:
             walk = self.outdoor + rng.choice((-1, 1)) * OUTDOOR_STEP
             if abs(walk - self._start_outdoor) > OUTDOOR_SPAN:
                 walk = self.outdoor - (walk - self.outdoor)  # reflect at the bound

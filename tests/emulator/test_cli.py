@@ -30,6 +30,20 @@ def test_unknown_profile_fails(capsys):
     assert "unknown profile" in capsys.readouterr().err
 
 
+def test_climate_needs_dynamics(tmp_path, capsys):
+    from datetime import date
+
+    from genesis_wp.emulator.climate import LICENSE, SOURCE, ClimateProfile
+
+    path = tmp_path / "c.json"
+    ClimateProfile("month", date(2021, 1, 1), date(2025, 12, 31), 0.0, 0.0, "UTC", SOURCE, LICENSE,
+                   ((0.0,) * 24,) * 12).save(path)
+    args = build_parser().parse_args(["--climate", str(path), "--start", "2026-01-15T06:00", "--speed", "60"])
+    assert (args.start.hour, args.speed) == (6, 60)
+    assert main(["--climate", str(path), "--port", "0"]) == 2
+    assert "needs dynamics" in capsys.readouterr().err
+
+
 def test_hc2_room_set_point_needs_profile_rules(capsys):
     assert build_parser().parse_args(["--room-set-point-hc2", "22.5"]).room_set_point_hc2 == 22.5
     assert main(["-i", PROFILE_606, "--room-set-point-hc2", "22"]) == 2
