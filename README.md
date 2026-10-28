@@ -119,6 +119,15 @@ The heating model also covers HC2's passive cooling, for testing a heat/cool swi
 
 Room set points shift the heating curves as the plant does, with or without dynamics (formal_review-3). Writing HC1's room set point (holding 5) moves holding 6-12 by 2 K per K. HC2's room set point has no register on the WPE-I, so the emulator offers it only through its API (`emu.set_room_set_point_hc2(22.5)`, `emu.room_set_point_hc2`) and `--room-set-point-hc2 22.5`; it moves holding 109-115 by 1 K per K. Both keep the plant's reference rule: the curve moves by (new − reference) rounded to whole kelvin, halves to even, and the reference follows only when the curve moved, so half steps add up. The rules are observations of firmware 6.1.5 in `genesis_wp/emulator/observations/`; a profile without them shifts nothing and rejects the HC2 call.
 
+A climate profile is the typical outdoor temperature of a location: for each month (or week) of the year, the mean at every local hour of the day over the last 5 full years, from the hourly archive of the [Open-Meteo historical weather API](https://open-meteo.com) (ERA5, CC BY 4.0), without interpolation. Build one once; this is the only step that uses the network:
+
+```sh
+genesis-wp-climate build --latitude 47.37 --longitude 8.54 -o climate.json            # 12 x 24 values
+genesis-wp-climate build --latitude 47.37 --longitude 8.54 --bucket week -o climate.json   # 52 x 24
+```
+
+The file carries the coordinates, so keep the one for your home out of version control; nothing logs them.
+
 New firmware: capture a read-only probe, then convert it with `scripts/probe_to_profile.py`.
 
 ## Development

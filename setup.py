@@ -24,7 +24,10 @@ setup(
         "emulator": ["pymodbus>=3.13.1"],
     },
     entry_points={
-        "console_scripts": ["genesis-wp-emulator=genesis_wp.emulator.cli:main"],
+        "console_scripts": [
+            "genesis-wp-emulator=genesis_wp.emulator.cli:main",
+            "genesis-wp-climate=genesis_wp.emulator.climate:main",
+        ],
     },
     classifiers=[
         "License :: OSI Approved :: MIT License",
