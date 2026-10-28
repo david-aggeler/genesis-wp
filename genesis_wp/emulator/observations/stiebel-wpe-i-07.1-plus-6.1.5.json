@@ -1,0 +1,7 @@
+{
+ "source": "owner-approved read-only sweeps around 13 room set point changes from the app and the display, 2026-10-28 (formal_review-3); not part of the probe capture",
+ "room_set_points": {
+  "hc1": {"factor": 2.0, "rounding": "half_even"},
+  "hc2": {"factor": 1.0, "rounding": "half_even", "initial": 21.0}
+ }
+}

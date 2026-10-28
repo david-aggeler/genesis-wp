@@ -15,7 +15,7 @@ setup(
     url="https://github.com/david-aggeler/genesis-wp",
     license="MIT",
     packages=["genesis_wp", "genesis_wp.emulator"],
-    package_data={"genesis_wp.emulator": ["profiles/*.json"]},
+    package_data={"genesis_wp.emulator": ["profiles/*.json", "observations/*.json"]},
     python_requires=">=3.12",
     # Home Assistant's Modbus connection layer (HA 2026.10 ships 4.12.3); pymodbus backend via its extra.
     install_requires=["modbus-connection[pymodbus]>=4.12.3,<5"],

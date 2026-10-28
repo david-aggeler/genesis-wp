@@ -10,7 +10,12 @@ Modbus block:
   on the device but not kept; they are served as 0.
 
 plus optional ``dynamics`` entries describing registers that drift when plant dynamics
-are enabled. Packaged profiles live next to this module in ``profiles/``.
+are enabled, and optional ``room_set_points`` rules: how a room set point change shifts
+the ``hc1`` and ``hc2`` heating curves on this firmware (requirement-23). Packaged
+profiles live next to this module in ``profiles/``.
+
+A packaged profile is a probe capture and is never edited in place. Plant behavior observed
+later, outside the probe, lives in ``observations/<profile>.json`` and is merged on load.
 """
 
 from __future__ import annotations
@@ -76,6 +81,42 @@ class DynamicRegister:
     max_step: int
 
 
+#: Rounding of a curve shift to whole kelvin. ``half_even``: exact halves go to the even number.
+ROUNDINGS = ("half_even",)
+#: Circuits a room set point rule can name; ``hc2`` has no register, so it needs an ``initial`` value.
+CIRCUITS = ("hc1", "hc2")
+
+
+@dataclass(frozen=True)
+class RoomSetPointRule:
+    """How a room set point change shifts one circuit's curve, as observed on the plant.
+
+    The plant keeps a reference set point, the one the stored curve belongs to. A change
+    moves all seven curve points by ``factor`` x (new - reference), rounded to whole
+    kelvin; the reference follows only when the curve moved (formal_review-3).
+    """
+
+    factor: float
+    rounding: str
+    #: Start value [°C] for a circuit whose set point has no register (HC2).
+    initial: float | None = None
+
+    @classmethod
+    def from_dict(cls, data: Mapping) -> RoomSetPointRule:
+        try:
+            initial = data.get("initial")
+            rule = cls(float(data["factor"]), str(data["rounding"]), None if initial is None else float(initial))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProfileError(f"room_set_points: malformed rule: {exc}") from exc
+        if rule.rounding not in ROUNDINGS:
+            raise ProfileError(f"room_set_points: unknown rounding {rule.rounding!r}, expected one of {', '.join(ROUNDINGS)}")
+        return rule
+
+    def shift(self, change: float) -> int:
+        """Whole kelvin the curve moves for a set point change of ``change`` kelvin."""
+        return round(change * self.factor)  # Python rounds exact halves to even
+
+
 @dataclass(frozen=True)
 class Profile:
     """A loaded firmware profile."""
@@ -89,6 +130,8 @@ class Profile:
     source: dict
     blocks: dict[str, Block]
     dynamics: tuple[DynamicRegister, ...] = field(default=())
+    #: Room set point rules by circuit (``hc1``, ``hc2``); empty when the firmware was not observed.
+    room_set_points: dict[str, RoomSetPointRule] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict) -> Profile:
@@ -102,6 +145,11 @@ class Profile:
                 values = {int(a): int(v) for a, v in raw["values"].items()}
                 blocks[name] = Block(name, ranges, values)
             dynamics = tuple(DynamicRegister(**entry) for entry in data.get("dynamics", []))
+            room_set_points = {
+                circuit: RoomSetPointRule.from_dict(rule)
+                for circuit, rule in data.get("room_set_points", {}).items()
+                if circuit != "source"
+            }
             profile = cls(
                 name=data["name"],
                 device=data["device"],
@@ -111,7 +159,10 @@ class Profile:
                 source=dict(data["source"]),
                 blocks=blocks,
                 dynamics=dynamics,
+                room_set_points=room_set_points,
             )
+        except ProfileError:
+            raise
         except (KeyError, TypeError, ValueError) as exc:
             raise ProfileError(f"malformed profile: {exc}") from exc
         profile._validate()
@@ -156,6 +207,11 @@ class Profile:
                 raise ProfileError(f"dynamics {dyn.name}: address {dyn.address} not implemented")
             if not dyn.min <= dyn.max or dyn.max_step < 1:
                 raise ProfileError(f"dynamics {dyn.name}: bad bounds or step")
+        for circuit, rule in self.room_set_points.items():
+            if circuit not in CIRCUITS:
+                raise ProfileError(f"room_set_points: unknown circuit {circuit!r}, expected one of {', '.join(CIRCUITS)}")
+            if circuit == "hc2" and rule.initial is None:
+                raise ProfileError("room_set_points: hc2 needs an initial value (it has no register)")
 
 
 def load_profile(path: str | Path) -> Profile:
@@ -177,4 +233,12 @@ def get_profile(name_or_path: str | Path) -> Profile:
     resource = resources.files(__package__) / "profiles" / f"{name_or_path}.json"
     if not resource.is_file():
         raise ProfileError(f"unknown profile {name_or_path!r}; packaged: {', '.join(packaged_profiles())}")
-    return Profile.from_dict(json.loads(resource.read_text()))
+    data = json.loads(resource.read_text())
+    observed = resources.files(__package__) / "observations" / f"{name_or_path}.json"
+    if observed.is_file():
+        observations = json.loads(observed.read_text())
+        if "room_set_points" in data:
+            raise ProfileError(f"{name_or_path}: room_set_points both in the profile and in its observations")
+        data["room_set_points"] = observations.get("room_set_points", {})
+        data["source"] = {**data["source"], "observations": observations.get("source", "")}
+    return Profile.from_dict(data)
