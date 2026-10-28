@@ -116,22 +116,75 @@ async def test_supply_temperature_approaches_its_set_point_with_a_lag(start_emul
         await client.close()
 
 
-async def test_mixing_valve_open_while_buffer_below_hc2_set_point(start_emulator):
-    emu = await dynamic(start_emulator, 8.75, overrides=curves())
-    names = ["input_buffer_tank_temperature", "input_mix_valve_1_position", "input_mix_valve_1_supply_line_temperature"]
+T31, T32, T33 = "input_buffer_tank_temperature", "input_mix_valve_1_supply_line_temperature", "input_system_supply_line_temperature"
+VALVE = "input_mix_valve_1_position"
+RPM, CONDENSER_OUT, BRINE_OUT = "input_compressor_speed_rpm", "input_condenser_out_temperature", "input_brine_out_temperature"
+HEAT, POWER = "input_current_power_output", "input_current_consumed_power"
+STOPPED = {("input_registers", 5): 0, ("input_registers", 39): 0}  # compressor speed and condenser pump
+
+
+async def readings(emu, names, steps, every=1):
+    """Read ``names`` after each of ``steps`` steps of ``every``."""
     client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
     try:
-        emu.step()
-        cold = await client.async_update(only_registers=names)
-        emu.step(80)  # HC1 at 33.5 charges the buffer past the HC2 set point 28.5
-        warm = await client.async_update(only_registers=names)
+        rows = []
+        for _ in range(steps):
+            emu.step(every)
+            rows.append(await client.async_update(only_registers=names))
+        return rows
     finally:
         await client.close()
-    assert cold["input_buffer_tank_temperature"] < 28.5
-    assert cold["input_mix_valve_1_position"] == 100
-    assert warm["input_buffer_tank_temperature"] > 28.5
-    assert warm["input_mix_valve_1_position"] < 100
-    assert warm["input_mix_valve_1_supply_line_temperature"] == pytest.approx(28.5, abs=0.05)
+
+
+# DHF-REQ: genesis-wp/requirement-20  DHF-TEST: genesis-wp/ac-66
+@pytest.mark.parametrize("served, expected", [(None, 100.0), (0, 0.0)])
+async def test_mixing_valve_signal_keeps_its_served_value(start_emulator, served, expected):
+    overrides = curves() if served is None else {**curves(), ("input_registers", 43): served}
+    emu = await dynamic(start_emulator, 8.75, overrides=overrides)
+    rows = await readings(emu, [T31, VALVE], 81)
+    assert rows[0][T31] < 28.5 < rows[-1][T31]  # the buffer crosses the HC2 set point
+    assert all(row[VALVE] == expected for row in rows)
+
+
+# DHF-REQ: genesis-wp/requirement-20  DHF-TEST: genesis-wp/ac-67
+async def test_hc2_supply_is_capped_by_t33_not_by_the_buffer(start_emulator):
+    emu = await dynamic(start_emulator, 8.75, overrides={**curves(), ("input_registers", 12): 3350, ("input_registers", 41): 2500})
+    rows = await readings(emu, [T31, T32, T33], 30)
+    early = rows[4]
+    assert early[T31] < 28.5 and early[T32] > early[T31]
+    assert all(row[T32] <= row[T33] for row in rows)
+    assert rows[-1][T32] == pytest.approx(28.5, abs=0.05)
+
+
+# DHF-REQ: genesis-wp/requirement-20  DHF-TEST: genesis-wp/ac-68
+async def test_while_stopped_t33_holds_and_the_buffer_cools_toward_t32(start_emulator):
+    stop = {**curves(), **STOPPED, ("input_registers", 12): 3550, ("input_registers", 41): 3520}
+    emu = await dynamic(start_emulator, 11.0, overrides=stop)
+    rows = await readings(emu, [*NAMES, T31, T32], 30)
+    assert all(row[T33] == 35.5 for row in rows)
+    buffer = [row[T31] for row in rows]
+    assert buffer == sorted(buffer, reverse=True) and buffer[0] < 35.2
+    hc2 = rows[-1]["input_desired_temperature_distribution_circuit_mix_valve_1"]
+    assert abs(buffer[-1] - hc2) < 1.0
+
+
+# DHF-REQ: genesis-wp/requirement-20  DHF-TEST: genesis-wp/ac-69
+async def test_heat_output_and_power_follow_compressor_speed_and_lift(start_emulator):
+    emu = await start_emulator(PROFILE_615, dynamics=True)
+    rows = await readings(emu, [RPM, CONDENSER_OUT, BRINE_OUT, HEAT, POWER], 20)
+    assert len({row[RPM] for row in rows}) > 1  # the speed drifts
+    for row in rows:
+        heat = 0.00121 * row[RPM] + 0.007
+        cop = 5.44 - 0.160 * (row[CONDENSER_OUT] - row[BRINE_OUT] - 29.8)
+        assert row[HEAT] == pytest.approx(heat, abs=0.02)
+        assert row[POWER] == pytest.approx(row[HEAT] / cop, abs=0.02)
+
+
+# DHF-REQ: genesis-wp/requirement-20  DHF-TEST: genesis-wp/ac-69
+async def test_stopped_compressor_has_no_heat_output_or_power(start_emulator):
+    emu = await start_emulator(PROFILE_615, dynamics=True, overrides=STOPPED)
+    rows = await readings(emu, [RPM, HEAT, POWER], 30)
+    assert all(row[RPM] == 0 and row[HEAT] == 0.0 and row[POWER] == 0.0 for row in rows)
 
 
 async def test_outdoor_temperature_drifts_slowly_when_not_held(start_emulator):

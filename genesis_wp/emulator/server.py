@@ -148,6 +148,9 @@ class Emulator:
                 not_fitted=not_fitted,
             )
             owned = {(INPUT_REGISTERS, a) for a in heating.INPUTS}
+            if not self.heating.running:
+                # A stopped compressor stays stopped; the drift would put its speed back in range.
+                owned.add((INPUT_REGISTERS, heating.SPEED))
             self._drift = [d for d in self._drift if (d.spec.block, d.spec.address) not in owned]
         self._server: ModbusTcpServer | None = None
         self._ticker: asyncio.Task | None = None
@@ -181,6 +184,10 @@ class Emulator:
                     new = drift.value - delta  # reflect at the bound
                 drift.value = min(max(new, spec.min), spec.max)
             if self.heating is not None:
+                self.heating.observe({
+                    d.spec.address: d.value for d in self._drift
+                    if d.spec.block == INPUT_REGISTERS and d.spec.address in heating.COMPRESSOR
+                })
                 self.heating.step(self._rng)
 
     async def start(self) -> None:
@@ -270,7 +277,7 @@ class Emulator:
         holding, inputs = self.profile.blocks[HOLDING_REGISTERS], self.profile.blocks[INPUT_REGISTERS]
         return (
             all(holding.implemented(a) for a in (*heating.HOLDING, heating.MODE_HC2, *heating.COOLING_HOLDING))
-            and all(inputs.implemented(a) for a in heating.INPUTS)
+            and all(inputs.implemented(a) for a in (*heating.INPUTS, *heating.COMPRESSOR))
             and self.profile.blocks[COILS].implemented(heating.ENABLE_PASSIVE_COOLING)
             and self.profile.blocks[DISCRETE_INPUTS].implemented(heating.PASSIVE_COOLING_ACTIVE)
         )
