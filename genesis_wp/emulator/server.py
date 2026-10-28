@@ -40,6 +40,7 @@ from .profile import (
     INPUT_REGISTERS,
     DynamicRegister,
     Profile,
+    ProfileError,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -115,6 +116,8 @@ class Emulator:
     capabilities: Mapping[str, bool] | None = None
     #: Hold the outdoor temperature [°C] of the heating model instead of letting it drift.
     outdoor_temperature: float | None = None
+    #: Start the HC2 room set point [°C] here instead of at the profile's initial value; applied as a change.
+    initial_room_set_point_hc2: float | None = None
 
     requests: list[Request] = field(default_factory=list, init=False)
     faults: list[Fault] = field(default_factory=list, init=False)
@@ -137,8 +140,10 @@ class Emulator:
             for d in self.profile.dynamics
             if not (d.block == INPUT_REGISTERS and d.address in not_fitted)
         ] if self.dynamics else []
+        # The heating model owns the curve points (room set points) whenever the profile has the
+        # registers; with dynamics on it also owns the process inputs it computes.
         self.heating: heating.HeatingModel | None = None
-        if self.dynamics and self._has_heating_registers():
+        if self._has_heating_registers():
             self.heating = heating.HeatingModel.from_values(
                 self.profile.blocks[HOLDING_REGISTERS].value,
                 self.profile.blocks[INPUT_REGISTERS].value,
@@ -146,7 +151,11 @@ class Emulator:
                 coil_raw=self.profile.blocks[COILS].value,
                 dinput_raw=self.profile.blocks[DISCRETE_INPUTS].value,
                 not_fitted=not_fitted,
+                rules=self.profile.room_set_points,
             )
+        if self.initial_room_set_point_hc2 is not None:
+            self.set_room_set_point_hc2(self.initial_room_set_point_hc2)
+        if self.dynamics and self.heating is not None:
             owned = {(INPUT_REGISTERS, a) for a in heating.INPUTS}
             if not self.heating.running:
                 # A stopped compressor stays stopped; the drift would put its speed back in range.
@@ -173,6 +182,22 @@ class Emulator:
     def clear_faults(self) -> None:
         self.faults.clear()
 
+    @property
+    def room_set_point_hc2(self) -> float | None:
+        """HC2 room set point [°C]; None when the profile has no rule for it."""
+        point = self.heating.room_set_points.get("hc2") if self.heating else None
+        return point.value if point else None
+
+    def set_room_set_point_hc2(self, celsius: float) -> None:
+        """Change the HC2 room set point: emulator only, the WPE-I has no register for it (formal_review-3).
+
+        Shifts holding 109-115 by the profile's rule; visible on the next read.
+        """
+        if self.heating is None or "hc2" not in self.heating.room_set_points:
+            raise ProfileError(f"profile {self.profile.name} has no room_set_points rule for hc2")
+        shift = self.heating.set_room_set_point("hc2", float(celsius))
+        _LOGGER.info("HC2 room set point %.1f °C, curve shift %+d K", celsius, shift)
+
     def step(self, steps: int = 1) -> None:
         """Advance plant dynamics by ``steps``. No-op when dynamics are off."""
         for _ in range(steps):
@@ -183,7 +208,7 @@ class Emulator:
                 if not spec.min <= new <= spec.max:
                     new = drift.value - delta  # reflect at the bound
                 drift.value = min(max(new, spec.min), spec.max)
-            if self.heating is not None:
+            if self.dynamics and self.heating is not None:
                 self.heating.observe({
                     d.spec.address: d.value for d in self._drift
                     if d.spec.block == INPUT_REGISTERS and d.spec.address in heating.COMPRESSOR
@@ -247,16 +272,20 @@ class Emulator:
             if drift.spec.block == block:
                 registers[drift.spec.address - start_address] = drift.value & 0xFFFF
         if self.heating is not None:
-            if block == INPUT_REGISTERS:
+            if block == INPUT_REGISTERS and self.dynamics:
                 for address, raw in self.heating.inputs().items():
                     registers[address - start_address] = raw
-            elif block == HOLDING_REGISTERS and values is not None and self.apply_writes:
-                for offset, raw in enumerate(values):
-                    self.heating.write(address + offset, raw & 0xFFFF)
+            elif block == HOLDING_REGISTERS:
+                if values is not None and self.apply_writes:
+                    for offset, raw in enumerate(values):
+                        self.heating.write(address + offset, raw & 0xFFFF)
+                # After the write, so a room set point write shows its curve shift at once.
+                for owned, raw in self.heating.holding_registers().items():
+                    registers[owned - start_address] = raw
             elif block == COILS and values is not None and self.apply_writes:
                 for offset, bit in enumerate(values):
                     self.heating.write_coil(address + offset, bool(bit))
-            elif block == DISCRETE_INPUTS:
+            elif block == DISCRETE_INPUTS and self.dynamics:
                 for bit_address, on in self.heating.discrete_inputs().items():
                     index = bit_address - start_address * 16
                     word, bit = divmod(index, 16)

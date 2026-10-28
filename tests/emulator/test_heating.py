@@ -197,7 +197,7 @@ async def test_outdoor_temperature_drifts_slowly_when_not_held(start_emulator):
 
 async def test_without_dynamics_set_points_are_the_captured_values(start_emulator):
     emu = await start_emulator(PROFILE_615)
-    assert emu.heating is None
+    # The model exists for the room set points (change_request-26) but serves no inputs.
     assert (await read(emu))["input_system_supply_line_calculated_set_point"] == 29.02
 
 

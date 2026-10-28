@@ -117,6 +117,8 @@ With dynamics on, the emulator also runs a heating model: the HC1 set point (inp
 
 The heating model also covers HC2's passive cooling, for testing a heat/cool switch against the emulator only (the real plant is never written). With coil 33 on and holding 298 at 1 (cool), or at 2 (auto) with the outdoor temperature at or above holding 303, HC2 cools toward holding 302: input 1 reports passive cooling and discrete input 245 turns on. A write-enabled test client changes these registers, and the emulator applies them on its next step.
 
+Room set points shift the heating curves as the plant does, with or without dynamics (formal_review-3). Writing HC1's room set point (holding 5) moves holding 6-12 by 2 K per K. HC2's room set point has no register on the WPE-I, so the emulator offers it only through its API (`emu.set_room_set_point_hc2(22.5)`, `emu.room_set_point_hc2`) and `--room-set-point-hc2 22.5`; it moves holding 109-115 by 1 K per K. Both keep the plant's reference rule: the curve moves by (new − reference) rounded to whole kelvin, halves to even, and the reference follows only when the curve moved, so half steps add up. The rules are observations of firmware 6.1.5 in `genesis_wp/emulator/observations/`; a profile without them shifts nothing and rejects the HC2 call.
+
 New firmware: capture a read-only probe, then convert it with `scripts/probe_to_profile.py`.
 
 ## Development

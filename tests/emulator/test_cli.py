@@ -9,7 +9,7 @@ from pathlib import Path
 
 from pymodbus.client import AsyncModbusTcpClient
 
-from genesis_wp.emulator.cli import _instance, main
+from genesis_wp.emulator.cli import _instance, build_parser, main
 from genesis_wp.emulator.server import _free_port
 
 from ..harness import PROFILE_606, PROFILE_615, UNIT
@@ -28,6 +28,12 @@ def test_list_profiles(capsys):
 def test_unknown_profile_fails(capsys):
     assert main(["-i", "no-such-profile"]) == 2
     assert "unknown profile" in capsys.readouterr().err
+
+
+def test_hc2_room_set_point_needs_profile_rules(capsys):
+    assert build_parser().parse_args(["--room-set-point-hc2", "22.5"]).room_set_point_hc2 == 22.5
+    assert main(["-i", PROFILE_606, "--room-set-point-hc2", "22"]) == 2
+    assert "no room_set_points rule for hc2" in capsys.readouterr().err
 
 
 async def test_command_runs_two_instances():

@@ -16,9 +16,15 @@ output over a COP that falls with the lift, condenser out (input 9) minus brine 
 Both are 0 while stopped. The coefficients are least-squares fits over the 20 h series.
 
 The mixing-valve register (input 43) is the valve's control signal, not a position, and is
-served as captured. Not modeled: the room set point's shift of the curve (observed once,
-change_request-17), the heating-season stop (holding 16), and when the compressor starts,
-stops or changes gear (issue-14).
+served as captured. Not modeled: the heating-season stop (holding 16), and when the
+compressor starts, stops or changes gear (issue-14).
+
+Room set points (requirement-23, formal_review-3): the plant keeps a reference set point per
+circuit, the one the stored curve belongs to. A change moves all seven curve points by the
+profile's factor x (new - reference), rounded to whole kelvin, and the reference follows only
+when the curve moved. HC1's set point is holding 5; HC2's has no register, so the emulator
+offers it through its API only. The model owns the curve holding registers and serves them,
+so a shift is visible on the next read.
 
 Passive cooling (requirement-19, design_decision-5): with coil 33 on and HC2's mode (holding
 298: 0 heat, 1 cool, 2 auto) at cool, or at auto with the outdoor temperature at or above the
@@ -33,7 +39,10 @@ model does not serve it (issue-12).
 from __future__ import annotations
 
 import random
+from collections.abc import Mapping
 from dataclasses import dataclass, field
+
+from .profile import RoomSetPointRule
 
 # Outdoor temperatures [°C] of the seven curve points, as the controller defines them.
 CURVE_X = (17.0, 10.0, 5.0, 0.0, -5.0, -15.0, -25.0)
@@ -43,6 +52,10 @@ HC1_MIN, HC1_MAX = 4, 3
 HC2_CURVE = tuple(range(109, 116))  # holding 109-115
 HC2_MIN, HC2_MAX = 107, 108
 HOLDING = (*HC1_CURVE, HC1_MIN, HC1_MAX, *HC2_CURVE, HC2_MIN, HC2_MAX)
+#: Holding registers the model serves: the curve points a room set point change moves.
+OWNED_HOLDING = (*HC1_CURVE, *HC2_CURVE)
+ROOM_SET_POINT_HC1 = 5  # holding, comfort wheel, °C at scale 100
+CURVES = {"hc1": HC1_CURVE, "hc2": HC2_CURVE}
 
 # Passive cooling
 MODE_HC2 = 298  # holding, raw: 0 heat, 1 cool, 2 auto
@@ -106,6 +119,15 @@ def _signed(raw: int) -> int:
 
 
 @dataclass
+class RoomSetPoint:
+    """One circuit's room set point and the reference its stored curve belongs to [°C]."""
+
+    rule: RoomSetPointRule
+    value: float
+    reference: float
+
+
+@dataclass
 class HeatingModel:
     """State of the heating model; temperatures in °C, valve in %."""
 
@@ -127,6 +149,8 @@ class HeatingModel:
     condenser_out: float = 0.0
     brine_out: float = 0.0
     condenser_pump: float = 0.0
+    #: Room set points by circuit, for the circuits the profile has rules for.
+    room_set_points: dict[str, RoomSetPoint] = field(default_factory=dict)
     _start_outdoor: float = field(init=False)
 
     def __post_init__(self) -> None:
@@ -134,12 +158,21 @@ class HeatingModel:
 
     @classmethod
     def from_values(cls, holding_raw, input_raw, outdoor: float | None = None, coil_raw=None, dinput_raw=None,
-                    not_fitted=frozenset()) -> HeatingModel:
-        """Build from raw block values (callables address -> raw); ``outdoor`` holds it."""
+                    not_fitted=frozenset(), rules: Mapping[str, RoomSetPointRule] | None = None) -> HeatingModel:
+        """Build from raw block values (callables address -> raw); ``outdoor`` holds it.
+
+        ``rules`` are the profile's room set point rules; HC1 starts at holding 5, HC2 at the
+        rule's initial value, each as its own reference.
+        """
         value = lambda read, a: _signed(read(a)) / SCALE  # noqa: E731
         coil_raw = coil_raw or (lambda a: 0)
         dinput_raw = dinput_raw or (lambda a: 0)
+        room_set_points = {}
+        for circuit, rule in (rules or {}).items():
+            start = value(holding_raw, ROOM_SET_POINT_HC1) if circuit == "hc1" else rule.initial
+            room_set_points[circuit] = RoomSetPoint(rule, start, start)
         return cls(
+            room_set_points=room_set_points,
             holding={a: value(holding_raw, a) for a in (*HOLDING, *COOLING_HOLDING)},
             passive_enabled=bool(coil_raw(ENABLE_PASSIVE_COOLING)),
             mode_hc2=holding_raw(MODE_HC2),
@@ -207,12 +240,29 @@ class HeatingModel:
         target = interpolate(tuple(self.holding[a] for a in curve), self.outdoor)
         return min(max(target, self.holding[low]), self.holding[high])
 
+    def set_room_set_point(self, circuit: str, celsius: float) -> int:
+        """Change a circuit's room set point; returns the curve shift [K] it caused."""
+        point = self.room_set_points[circuit]
+        shift = point.rule.shift(celsius - point.reference)
+        point.value = celsius
+        if shift:
+            for address in CURVES[circuit]:
+                self.holding[address] += shift
+            point.reference = celsius
+        return shift
+
     def write(self, address: int, raw: int) -> None:
         """A holding write the emulator applied; curve points and limits take effect on the next step."""
         if address == MODE_HC2:
             self.mode_hc2 = raw
+        elif address == ROOM_SET_POINT_HC1 and "hc1" in self.room_set_points:
+            self.set_room_set_point("hc1", _signed(raw) / SCALE)
         elif address in self.holding:
             self.holding[address] = _signed(raw) / SCALE
+
+    def holding_registers(self) -> dict[int, int]:
+        """Raw holding register values (unsigned 16-bit) the model owns: the curve points."""
+        return {a: round(self.holding[a] * SCALE) & 0xFFFF for a in OWNED_HOLDING}
 
     def write_coil(self, address: int, on: bool) -> None:
         """A coil write the emulator applied."""

@@ -7,6 +7,7 @@ Examples::
     genesis-wp-emulator --dynamics --interval 5 -v
     genesis-wp-emulator --capability hot_water=on --capability heating_circuit_2=off
     genesis-wp-emulator --dynamics --outdoor-temperature -5
+    genesis-wp-emulator --room-set-point-hc2 22.5
     genesis-wp-emulator --list-profiles
 """
 
@@ -60,6 +61,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--outdoor-temperature", type=float, metavar="CELSIUS",
         help="with --dynamics: hold the outdoor temperature of the heating model instead of letting it drift",
     )
+    parser.add_argument(
+        "--room-set-point-hc2", type=float, metavar="CELSIUS",
+        help="start the HC2 room set point here; shifts the HC2 curve like the plant does. "
+        "Emulator only: the WPE-I has no register for it",
+    )
     parser.add_argument("--ignore-writes", action="store_true", help="record writes but do not apply them")
     parser.add_argument("--list-profiles", action="store_true", help="list packaged profiles and exit")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="-v: requests, -vv: pymodbus debug")
@@ -83,6 +89,7 @@ async def _run(args: argparse.Namespace) -> None:
             apply_writes=not args.ignore_writes,
             capabilities=args.selection,
             outdoor_temperature=args.outdoor_temperature,
+            initial_room_set_point_hc2=args.room_set_point_hc2,
         ))
     for emu in emulators:
         await emu.start()
