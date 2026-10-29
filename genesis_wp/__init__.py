@@ -23,6 +23,7 @@ from .const import *
 from . import capabilities as _capabilities
 from .capabilities import ABSENT, PRESENT, UNKNOWN, Capability
 from .groups import register_category, register_concerns, register_group, register_role
+from .redaction import RedactionHandle, redact_transport_host
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -110,6 +111,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         self._capabilities_seen: set[str] = set()
         self._unit = unit
         self._connection = None  # our own connection, created lazily; None for an injected unit
+        self._redaction: RedactionHandle | None = None  # our host in transport log records
         self._unit_id = unit_id
         self._timeout = timeout
         self.firmware = None
@@ -132,6 +134,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         if self._connection is None:
             from modbus_connection.pymodbus import ModbusConnection
 
+            await self._redact_host()
             self._connection = ModbusConnection(
                 ModbusTcpParams(host=self._host, port=self._port), timeout=self._timeout
             )
@@ -150,6 +153,16 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
                 raise self._connection_failed("Failed to connect to", failure) from None
         return self._unit
 
+    async def _redact_host(self) -> None:
+        """Keep our host and its addresses out of the transport's log records (issue-16)."""
+        if self._redaction is None:
+            self._redaction = redact_transport_host(str(self._host))
+        try:
+            infos = await asyncio.get_running_loop().getaddrinfo(self._host, self._port)
+        except OSError:
+            return  # the connect fails too; its record names only the host, already redacted
+        self._redaction.add(*(info[4][0] for info in infos))
+
     def _connection_failed(self, what, err) -> ThermiaConnectionError:
         """A host-free connection error; the cause is logged by class name only."""
         _LOGGER.debug("%s unit %s: %s", what, self._unit_id, type(err).__name__)
@@ -161,6 +174,9 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             await self._connection.close()
             self._connection = None
             self._unit = None
+        if self._redaction is not None:
+            self._redaction.remove()
+            self._redaction = None
 
     async def async_set(self, register, value):  # pylint:disable=too-many-branches
         """Write data to heat pump."""
