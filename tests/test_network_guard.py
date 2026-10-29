@@ -7,6 +7,8 @@ import socket
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 # RFC 5737 TEST-NET-1: documentation range, never routed. The guard must refuse it
 # before any packet leaves, so these tests send nothing even if the guard is broken
 # only in the "refuse" direction (connect would then fail with a timeout/unreachable).

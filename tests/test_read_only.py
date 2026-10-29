@@ -17,6 +17,8 @@ from genesis_wp.const import (
 
 from .harness import PROFILE_615, WPE_I_KIND, library_full_update
 
+pytestmark = pytest.mark.writes
+
 WRITABLE = sorted(
     name for name, meta in REGISTERS.items()
     if meta[KEY_REG_TYPE] in (REG_COIL, REG_HOLDING) and meta.get(MODEL_STIEBEL_WPE_I_071)

@@ -11,6 +11,8 @@ from genesis_wp.emulator.climate import BUCKETS, LICENSE, SOURCE, ClimateProfile
 
 from ..harness import PROFILE_615
 
+pytestmark = pytest.mark.dynamics
+
 START = datetime(2026, 1, 15, 0, 0)
 
 

@@ -10,6 +10,8 @@ from genesis_wp import ThermiaGenesis
 
 from .harness import PROFILE_615
 
+pytestmark = pytest.mark.fixture
+
 SG_REGISTERS = ["dinput_smart_grid_1", "dinput_smart_grid_2", "holding_power_consumption_control", "input_comfort_mode"]
 
 

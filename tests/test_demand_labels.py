@@ -11,6 +11,8 @@ from genesis_wp.const import MODEL_MEGA
 
 from .harness import PROFILE_615
 
+pytestmark = pytest.mark.fixture
+
 DEMAND = "input_first_prioritised_demand"
 
 

@@ -11,6 +11,8 @@ import pytest
 
 from .harness import PROFILES, expected_library_values, library_full_update
 
+pytestmark = pytest.mark.fixture
+
 # What the inherited library sent to the real unit during the probes (max_registers=16),
 # plus the reads change_request-8 added for the WPE-I: discrete inputs 247-254 (KSM),
 # input 413 (fan test) and input 30 (demand, read alone). The input-1 read widens to 1-2

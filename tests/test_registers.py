@@ -12,6 +12,8 @@ from genesis_wp.const import MODEL_STIEBEL_WPE_I_071, REGISTERS
 
 from .harness import ADDED_WPE_I_REGISTERS, PROFILE_615, PROFILES, decode_raw, library_full_update
 
+pytestmark = pytest.mark.fixture
+
 KSM = [f"dinput_ksm_{suffix}" for suffix in (
     "internal_error_1", "internal_error_2", "fan_test_pressure_sensor_before_start",
     "fan_test_pressure_sensor_not_triggered", "refrigerant_leak_detected",

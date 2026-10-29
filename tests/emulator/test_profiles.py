@@ -15,6 +15,8 @@ from genesis_wp.emulator.profile import Profile
 
 from ..harness import PROFILE_606, PROFILE_615
 
+pytestmark = pytest.mark.emulator
+
 PROFILE_DIR = Path(__file__).parents[2] / "genesis_wp" / "emulator" / "profiles"
 MODEL_KEY_ADDED_AFTER = "58b8739"  # last commit before change_request-15
 

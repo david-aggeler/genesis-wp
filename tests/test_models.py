@@ -1,5 +1,9 @@
+import pytest
+
 from genesis_wp import ThermiaGenesis
 from genesis_wp.const import *
+
+pytestmark = pytest.mark.unit
 
 def test_legacy_model_identifiers_unchanged():
     assert MODEL_MEGA == "mega"

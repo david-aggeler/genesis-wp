@@ -10,6 +10,8 @@ from genesis_wp.groups import (
     CATEGORIES, GROUP_CATEGORY, GROUPS, REGISTER_CATEGORIES, REGISTER_GROUPS, ROLE_ALARM, ROLE_MEASUREMENT, ROLE_SETTING, ROLES,
 )
 
+pytestmark = pytest.mark.unit
+
 
 # DHF-REQ: genesis-wp/requirement-12  DHF-TEST: genesis-wp/ac-35
 @pytest.mark.parametrize("kind", list(MODEL_NAMES))

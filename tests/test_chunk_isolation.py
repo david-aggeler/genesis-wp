@@ -10,6 +10,8 @@ from genesis_wp.const import KEY_ADDRESS, KEY_REG_TYPE, MODEL_STIEBEL_WPE_I_071,
 
 from .harness import PROFILE_615, WPE_I_KIND, expected_library_values, library_full_update
 
+pytestmark = pytest.mark.fixture
+
 
 async def _chunk_with(start_emulator, address: int):
     """The (start, count) of the library's input-register read that covers ``address``."""

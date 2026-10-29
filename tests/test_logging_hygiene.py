@@ -16,6 +16,8 @@ from genesis_wp.const import ATTR_HOLDING_COMFORT_WHEEL_SETTING
 from .harness import PROFILE_615, WPE_I_KIND
 from .test_transport import FIRMWARE, _closed_port
 
+pytestmark = pytest.mark.writes
+
 HOSTS = ["127.0.0.1", "localhost"]
 FORBIDDEN = ("127.0.0.1", "localhost", "::1")  # "localhost" resolves to both loopback addresses
 _FORMATTER = logging.Formatter()

@@ -13,6 +13,8 @@ from genesis_wp import ThermiaConnectionError, ThermiaGenesis
 
 from .harness import PROFILE_615, UNIT, WPE_I_KIND, expected_library_values, library_full_update
 
+pytestmark = pytest.mark.fixture
+
 FIRMWARE = ["input_control_software_version_major", "input_control_software_version_minor", "input_control_software_version_micro"]
 
 
