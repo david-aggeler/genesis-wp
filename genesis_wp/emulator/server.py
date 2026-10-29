@@ -34,6 +34,7 @@ from ..const import KEY_ADDRESS, KEY_NOT_FITTED, KEY_REG_TYPE, REG_INPUT, REGIST
 from . import heating
 from .capabilities import selection_overrides
 from .climate import ClimateProfile
+from .control_server import ControlServer
 from .profile import (
     BLOCKS,
     COILS,
@@ -126,6 +127,8 @@ class Emulator:
     start_time: datetime | None = None
     #: Simulated seconds per real second.
     playback_speed: float = 1.0
+    #: Control channel port (requirement-24); None = off, 0 = a free port, reported here after start().
+    control_port: int | None = None
 
     requests: list[Request] = field(default_factory=list, init=False)
     faults: list[Fault] = field(default_factory=list, init=False)
@@ -179,7 +182,9 @@ class Emulator:
             self._clock = self.start_time or datetime.now().replace(second=0, microsecond=0)
             self.heating.walk_outdoor = False
             self._feed_outdoor()
+        self._paused = False
         self._server: ModbusTcpServer | None = None
+        self._control: ControlServer | None = None
         self._ticker: asyncio.Task | None = None
 
     # ---- public API -------------------------------------------------------------
@@ -245,6 +250,54 @@ class Emulator:
             self._feed_outdoor()
             self.step()
 
+    @property
+    def paused(self) -> bool:
+        """True while the simulated clock is paused; the ticker then leaves the plant as it is."""
+        return self._paused
+
+    def pause(self) -> None:
+        self._need_clock()
+        self._paused = True
+        _LOGGER.info("simulated clock paused at %s", self._clock)
+
+    def resume(self) -> None:
+        self._need_clock()
+        self._paused = False
+        _LOGGER.info("simulated clock resumed at %s", self._clock)
+
+    def set_simulated_time(self, when: datetime) -> None:
+        """Jump the simulated clock; the outdoor temperature follows at once (unless held)."""
+        self._need_clock()
+        if when.tzinfo is not None:
+            raise ValueError("the simulated clock has no time zone; pass a naive datetime")
+        self._clock = when.replace(second=0, microsecond=0)
+        self._carry = 0.0
+        self._feed_outdoor()
+        _LOGGER.info("simulated time set to %s", self._clock)
+
+    def hold_outdoor(self, celsius: float) -> None:
+        """Hold the heating model's outdoor temperature (input 13) at ``celsius``."""
+        self._need_dynamics()
+        self.heating.outdoor = float(celsius)
+        self.heating.hold_outdoor = True
+        _LOGGER.info("outdoor temperature held at %.2f °C", celsius)
+
+    def release_outdoor(self) -> None:
+        """Back to the climate profile, or to the drift from the current value without one."""
+        self._need_dynamics()
+        self.heating.hold_outdoor = False
+        if self._clock is not None:
+            self._feed_outdoor()
+        _LOGGER.info("outdoor temperature released")
+
+    def _need_clock(self) -> None:
+        if self._clock is None:
+            raise RuntimeError("no simulated clock: load a climate profile")
+
+    def _need_dynamics(self) -> None:
+        if not self.dynamics or self.heating is None:
+            raise RuntimeError("the outdoor temperature needs dynamics and the heating registers")
+
     def _feed_outdoor(self) -> None:
         if not self.heating.hold_outdoor:
             self.heating.outdoor = self.climate.value_at(self._clock)
@@ -286,8 +339,16 @@ class Emulator:
         if self.dynamics and self.dynamics_interval > 0:
             self._ticker = asyncio.create_task(self._tick())
         _LOGGER.info("emulator %s listening on %s:%s", self.profile.name, self.host, self.port)
+        if self.control_port is not None:
+            self._control = ControlServer(self, self.host, self.control_port)
+            await self._control.start()
+            self.control_port = self._control.port
+            _LOGGER.info("emulator %s control channel on %s:%s", self.profile.name, self.host, self.control_port)
 
     async def stop(self) -> None:
+        if self._control:
+            await self._control.stop()
+            self._control = None
         if self._ticker:
             self._ticker.cancel()
             self._ticker = None
@@ -385,6 +446,8 @@ class Emulator:
     async def _tick(self) -> None:
         while True:
             await asyncio.sleep(self.dynamics_interval)
+            if self._paused:
+                continue
             if self._clock is not None:
                 self.play(self.dynamics_interval)
             else:
