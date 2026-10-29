@@ -9,3 +9,14 @@ process: HELIX01
 placeholders:
   build_command: [python, -m, pytest]
   primary_language: "Python"
+
+# Gate stages per transition_gate rung (requirement-26). Cumulative: each rung holds every
+# stage of the rung below. in_session stages are run by the authoring session; runner_owned
+# stages are run by the openbrain-client runner, never by the session that wrote the code.
+# Each rung is one line of JSON flow style (valid YAML), so tests read it without a YAML parser.
+transition_gates:
+  prose: {"in_session": [], "runner_owned": []}
+  static: {"in_session": [["python", "-m", "compileall", "-q", "genesis_wp", "scripts", "tests"]], "runner_owned": [["python", "scripts/check_complexity.py"]]}
+  unit: {"in_session": [["python", "-m", "compileall", "-q", "genesis_wp", "scripts", "tests"], ["python", "-m", "pytest"]], "runner_owned": [["python", "scripts/check_complexity.py"]]}
+  integration: {"in_session": [["python", "-m", "compileall", "-q", "genesis_wp", "scripts", "tests"], ["python", "-m", "pytest"]], "runner_owned": [["python", "scripts/check_complexity.py"], ["python", "scripts/check_coverage.py"]]}
+  system: {"in_session": [["python", "-m", "compileall", "-q", "genesis_wp", "scripts", "tests"], ["python", "-m", "pytest"]], "runner_owned": [["python", "scripts/check_complexity.py"], ["python", "scripts/check_coverage.py"]]}

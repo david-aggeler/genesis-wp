@@ -1,0 +1,10 @@
+# Coverage of the genesis_wp package under the full test suite (requirement-26, ac-101).
+# Read by scripts/check_coverage.py, a runner-owned gate stage; plain pytest does not measure.
+[run]
+source = genesis_wp
+branch = True
+
+[report]
+fail_under = 90
+show_missing = True
+skip_covered = True

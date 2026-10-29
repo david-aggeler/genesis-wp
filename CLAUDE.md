@@ -166,7 +166,9 @@ Workflow entry points: `/change-request` (manual, owner-driven), `/automated-cha
 
 The field is `transition_gate`. Its values are five cumulative evidence classes — `prose` ⊂ `static` ⊂ `unit` ⊂ `integration` ⊂ `system`.
 
-Commands are NEVER read from a record. Every invoker resolves them from the committed `openbrain-client.yaml` at the repo root, under `transition_gates.<rung>`. `openbrain-client.yaml` does not declare `transition_gates` yet. Until it does, run the rung's stages from *The gate* below, in session.
+Commands are NEVER read from a record. Every invoker resolves them from the committed `openbrain-client.yaml` at the repo root, under `transition_gates.<rung>`. That file is the single source of the stage commands; the table below only says what each rung proves.
+
+Each rung has `in_session` stages, which the authoring session runs, and `runner_owned` stages, which the openbrain-client runner runs. The session never runs a runner-owned stage to grade its own work. Exception, until the runner can execute runner-owned stages on this host: the session runs the same committed commands by hand and says so in the change_request evidence.
 
 The merge is the git operation ONLY. It runs no gate and tears nothing down.
 
@@ -174,13 +176,13 @@ The merge is the git operation ONLY. It runs no gate and tears nothing down.
 
 Cumulative by rung — each rung runs everything below it.
 
-| Rung | Stages |
-|---|---|
-| `prose` | none — diff review only |
-| `static` | byte-compile the package (`python -m compileall`); linters once the repo adopts them |
-| `unit` | `python -m pytest` — hermetic, loopback only |
-| `integration` | `python -m pytest` including the tests that start emulator instances and run full updates against every firmware profile |
-| `system` | an owner-approved, read-only (FC1–4) probe of the real heat pump compared with the current profile — never automated, never a write |
+| Rung | In session | Runner-owned |
+|---|---|---|
+| `prose` | none — diff review only | none |
+| `static` | byte-compile (`python -m compileall`) | complexity check: every function ≤ 15 cyclomatic and cognitive (requirement-26) |
+| `unit` | `python -m pytest` — hermetic, loopback only; no coverage measurement | as `static` |
+| `integration` | `python -m pytest`, including the tests that start emulator instances and run full updates against every firmware profile | as `static`, plus the coverage check: `genesis_wp` line+branch ≥ 90 % |
+| `system` | as `integration`, plus an owner-approved, read-only (FC1–4) probe of the real heat pump compared with the current profile — never automated, never a write | as `integration` |
 
 - **Hosted CI is not a gate.** `.github/workflows/python-publish.yml` (inherited from upstream) builds and uploads to PyPI whenever a GitHub release is created. It runs no tests, and creating a release is outward-facing: owner's OK only. Every gate runs locally on the DEV VM.
 - **The rungs are not substitutes for one another.** Never satisfy a rung with a lower rung's evidence.
