@@ -82,6 +82,16 @@ Inside Home Assistant, pass a unit from a shared `modbus-connection` connection 
 thermia = ThermiaGenesis(unit=connection.for_unit(1), kind="stiebel_wpe_i_07_1")
 ```
 
+The device host never appears in the library's log records or exception text. pymodbus writes the address into its own records (logger `pymodbus.logging`); while the client owns its connection, it replaces its host and the host's resolved addresses there with `<device>`. The caller owns an injected unit, so the caller registers that host:
+
+```python
+from genesis_wp import redact_transport_host
+
+redaction = redact_transport_host(host)  # names or addresses; handle.add(...) for more
+...
+redaction.remove()
+```
+
 ## Emulator
 
 `genesis_wp.emulator` serves a captured heat pump over Modbus TCP, so you can develop and test without touching a real heating plant. Each firmware profile (`genesis_wp/emulator/profiles/`) holds the address ranges a real unit answered and the raw values read from it, captured by a read-only probe. Addresses outside those ranges get Modbus exception 2, like on the device.
