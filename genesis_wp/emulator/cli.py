@@ -9,6 +9,8 @@ Examples::
     genesis-wp-emulator --dynamics --outdoor-temperature -5
     genesis-wp-emulator --room-set-point-hc2 22.5
     genesis-wp-emulator --dynamics --interval 1 --climate climate.json --start 2026-01-15T06:00 --speed 60
+    genesis-wp-emulator --dynamics --interval 1 --climate climate.json --control-port 5520
+    genesis-wp-emulator ctl 127.0.0.1:5520 speed 3600
     genesis-wp-emulator --list-profiles
 """
 
@@ -16,6 +18,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import dataclasses
+import json
 import logging
 import signal
 import sys
@@ -24,6 +28,7 @@ from pathlib import Path
 
 from .capabilities import parse_selection
 from .climate import ClimateError, ClimateProfile
+from .control import ControlError, EmulatorControl
 from .profile import ProfileError, get_profile, packaged_profiles
 from .server import Emulator
 
@@ -83,6 +88,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--speed", type=float, default=1.0,
         help="with --climate: simulated seconds per real second, e.g. 60 = one hour per minute (default 1)",
     )
+    parser.add_argument(
+        "--control-port", type=int, metavar="PORT",
+        help="serve the control channel (playback speed, pause, simulated time, held outdoor temperature) "
+        "on PORT; instance n gets PORT+n, 0 = free ports. Drive it with: genesis-wp-emulator ctl HOST:PORT ...",
+    )
     parser.add_argument("--ignore-writes", action="store_true", help="record writes but do not apply them")
     parser.add_argument("--list-profiles", action="store_true", help="list packaged profiles and exit")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="-v: requests, -vv: pymodbus debug")
@@ -94,9 +104,10 @@ async def _run(args: argparse.Namespace) -> None:
     climate = ClimateProfile.load(args.climate) if args.climate else None
     emulators = []
     next_port = args.port
-    for name, port in specs:
+    for index, (name, port) in enumerate(specs):
         if port is None:
             port, next_port = next_port, next_port + 1
+        control_port = args.control_port + index if args.control_port else args.control_port
         emulators.append(Emulator(
             get_profile(name),
             host=args.host,
@@ -111,6 +122,7 @@ async def _run(args: argparse.Namespace) -> None:
             climate=climate,
             start_time=args.start,
             playback_speed=args.speed,
+            control_port=control_port,
         ))
     for emu in emulators:
         await emu.start()
@@ -118,6 +130,8 @@ async def _run(args: argparse.Namespace) -> None:
         for note in emu.profile.source.get("notes", []):
             if note.startswith("capability selection"):
                 print(f"  {note}", flush=True)
+        if emu.control_port is not None:
+            print(f"  control channel on {emu.host}:{emu.control_port}", flush=True)
         if emu.simulated_time is not None:
             print(f"  climate {climate.bucket} profile, simulated start {emu.simulated_time:%Y-%m-%d %H:%M}, "
                   f"speed {emu.playback_speed:g}", flush=True)
@@ -135,7 +149,60 @@ async def _run(args: argparse.Namespace) -> None:
             print(f"{emu.profile.name}: {len(emu.requests)} requests, {writes} writes", flush=True)
 
 
+def build_ctl_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="genesis-wp-emulator ctl",
+        description="Drive a running emulator over its control channel. Prints the result as JSON.",
+    )
+    parser.add_argument("endpoint", metavar="HOST:PORT", help="the emulator's control channel")
+    parser.add_argument("--timeout", type=float, default=2.0, help="seconds per request (default 2)")
+    commands = parser.add_subparsers(dest="command", required=True, metavar="COMMAND")
+    commands.add_parser("identify", help="emulator, profile, protocol and package version")
+    commands.add_parser("state", help="simulated time, speed, pause, outdoor temperature")
+    commands.add_parser("speed", help="set the playback speed").add_argument("value", type=float)
+    commands.add_parser("pause", help="pause the simulated clock")
+    commands.add_parser("resume", help="resume the simulated clock")
+    commands.add_parser("time", help="jump the simulated clock").add_argument("value", type=datetime.fromisoformat)
+    commands.add_parser("hold", help="hold the outdoor temperature [°C]").add_argument("value", type=float)
+    commands.add_parser("release", help="release the held outdoor temperature")
+    return parser
+
+
+async def _ctl(args: argparse.Namespace):
+    host, _, port = args.endpoint.rpartition(":")
+    if not host or not port.isdigit():
+        raise ValueError(f"endpoint must be HOST:PORT, got {args.endpoint!r}")
+    async with EmulatorControl(host, int(port), timeout=args.timeout) as control:
+        call = {
+            "identify": control.identify, "state": control.state, "pause": control.pause,
+            "resume": control.resume, "release": control.release_outdoor,
+            "speed": lambda: control.set_playback_speed(args.value),
+            "time": lambda: control.set_simulated_time(args.value),
+            "hold": lambda: control.hold_outdoor(args.value),
+        }[args.command]
+        return await call()
+
+
+def ctl_main(argv: list[str]) -> int:
+    args = build_ctl_parser().parse_args(argv)
+    try:
+        result = asyncio.run(_ctl(args))
+    except ControlError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if dataclasses.is_dataclass(result):
+        result = dataclasses.asdict(result)
+    print(json.dumps(result if result is not None else {"ok": True}, default=str, indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "ctl":
+        return ctl_main(argv[1:])
     args = build_parser().parse_args(argv)
     if args.list_profiles:
         print("\n".join(packaged_profiles()))

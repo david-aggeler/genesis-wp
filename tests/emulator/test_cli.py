@@ -77,3 +77,38 @@ async def test_command_runs_two_instances():
         proc.send_signal(signal.SIGTERM)
         await asyncio.wait_for(proc.wait(), timeout=10)
     assert proc.returncode == 0
+
+
+async def test_ctl_drives_a_running_emulator(tmp_path, capsys):
+    """DHF-REQ: genesis-wp/requirement-24 — the ctl command uses the same client."""
+    import json
+    from datetime import date
+
+    from genesis_wp.emulator import Emulator, get_profile
+    from genesis_wp.emulator.climate import BUCKETS, LICENSE, SOURCE, ClimateProfile
+    from genesis_wp.emulator.cli import _ctl, build_ctl_parser
+
+    values = tuple(tuple(float(m) for _ in range(24)) for m in range(1, BUCKETS["month"] + 1))
+    climate = ClimateProfile("month", date(2021, 1, 1), date(2025, 12, 31), 0.0, 0.0, "UTC", SOURCE, LICENSE, values)
+    emu = Emulator(get_profile(PROFILE_615), port=0, dynamics=True, climate=climate, control_port=0)
+    await emu.start()
+    try:
+        endpoint = f"{emu.host}:{emu.control_port}"
+        assert (await _ctl(build_ctl_parser().parse_args([endpoint, "identify"]))).profile == PROFILE_615
+        await _ctl(build_ctl_parser().parse_args([endpoint, "speed", "600"]))
+        assert emu.playback_speed == 600
+        await _ctl(build_ctl_parser().parse_args([endpoint, "hold", "-7.5"]))
+        assert emu.heating.outdoor == -7.5 and emu.heating.hold_outdoor
+    finally:
+        await emu.stop()
+
+
+def test_ctl_errors(capsys):
+    assert main(["ctl", f"127.0.0.1:{_free_port('127.0.0.1')}", "--timeout", "1", "state"]) == 1
+    assert "not_an_emulator" in capsys.readouterr().err
+    assert main(["ctl", "nohost", "state"]) == 2
+
+
+def test_control_port_flag_is_parsed():
+    args = build_parser().parse_args(["--control-port", "5520"])
+    assert args.control_port == 5520

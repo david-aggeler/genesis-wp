@@ -136,6 +136,35 @@ genesis-wp-emulator --dynamics --interval 1 --climate climate.json --start 2026-
 
 In Python: `Emulator(..., dynamics=True, climate=ClimateProfile.load("climate.json"), start_time=..., playback_speed=60)`, then `emu.simulated_time`, `emu.set_playback_speed(3600)`, and `emu.advance(seconds)` to jump ahead.
 
+### Control channel
+
+The emulator's Modbus surface is the plant's, so emulator-only controls get their own TCP port: the control channel. Plant values stay on Modbus. That includes set points the plant has registers for, such as HC1's room set point in holding 5. The channel has no operation for a value the real unit has no register for, such as HC2's room set point.
+
+```sh
+genesis-wp-emulator --dynamics --interval 1 --climate climate.json --control-port 5520
+genesis-wp-emulator ctl 127.0.0.1:5520 identify
+genesis-wp-emulator ctl 127.0.0.1:5520 speed 3600          # 1 h per second
+genesis-wp-emulator ctl 127.0.0.1:5520 pause               # resume
+genesis-wp-emulator ctl 127.0.0.1:5520 time 2026-07-15T14:00
+genesis-wp-emulator ctl 127.0.0.1:5520 hold -5             # release
+genesis-wp-emulator ctl 127.0.0.1:5520 state
+```
+
+The client, `genesis_wp.emulator.control.EmulatorControl`, is plain asyncio and imports without pymodbus, so tests and integrations use it without the `emulator` extra:
+
+```python
+from genesis_wp.emulator.control import EmulatorControl, NotAnEmulator
+
+async with EmulatorControl(host, control_port) as control:
+    identity = await control.identify()   # raises NotAnEmulator for anything but this emulator
+    await control.set_playback_speed(60)
+    state = await control.state()         # simulated_time, playback_speed, paused, outdoor_temperature, ...
+```
+
+`identify()` is the check against a wrong host: a real heat pump has no control endpoint, so it raises `NotAnEmulator`. Invalid values are rejected with `ControlError(code="invalid_value")` and change nothing. Clock operations without a climate profile, and outdoor operations without dynamics, raise `ControlError(code="unavailable")`. In-process, `Emulator(..., control_port=0)` binds a free port and reports it in `emu.control_port` after `start()`.
+
+The wire format is one JSON object per line, protocol version 1, described in `genesis_wp/emulator/control.py`. The port binds the emulator's host, loopback by default, and has no authentication.
+
 New firmware: capture a read-only probe, then convert it with `scripts/probe_to_profile.py`.
 
 ## Development
