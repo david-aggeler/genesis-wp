@@ -184,22 +184,22 @@ def every_register_reads(s: Snapshot) -> list[str]:
 
 def values_have_their_declared_type(s: Snapshot) -> list[str]:
     """Bits are booleans, status registers labels, numbers numbers; None only for a declared sentinel."""
-    wrong = []
-    for name, value in s.data.items():
-        meta = REGISTERS[name]
-        kind = meta[KEY_DATATYPE]
-        if value is None:
-            if WPE_I_KIND not in meta.get(KEY_NOT_FITTED, {}):
-                wrong.append(f"{name}: None without a declared not-fitted sentinel")
-        elif kind == TYPE_BIT:
-            if not isinstance(value, bool):
-                wrong.append(f"{name}: {value!r} is not a boolean")
-        elif kind == TYPE_STATUS:
-            if not isinstance(value, str):
-                wrong.append(f"{name}: {value!r} is not a status label")
-        elif isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
-            wrong.append(f"{name}: {value!r} is not a finite number")
-    return wrong
+    wrong = (_type_error(name, value) for name, value in s.data.items())
+    return [error for error in wrong if error]
+
+
+def _type_error(name: str, value) -> str | None:
+    meta = REGISTERS[name]
+    kind = meta[KEY_DATATYPE]
+    if value is None:
+        declared = WPE_I_KIND in meta.get(KEY_NOT_FITTED, {})
+        return None if declared else f"{name}: None without a declared not-fitted sentinel"
+    if kind == TYPE_BIT:
+        return None if isinstance(value, bool) else f"{name}: {value!r} is not a boolean"
+    if kind == TYPE_STATUS:
+        return None if isinstance(value, str) else f"{name}: {value!r} is not a status label"
+    finite = not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
+    return None if finite else f"{name}: {value!r} is not a finite number"
 
 
 def temperatures_are_plausible(s: Snapshot) -> list[str]:

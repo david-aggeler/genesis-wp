@@ -75,34 +75,48 @@ def selection_overrides(profile: Profile, selection: Mapping[str, bool]) -> tupl
     overrides: dict[tuple[str, int], int] = {}
     notes: list[str] = []
     for name, on in selection.items():
-        rule = next((r for r in lib.CAPABILITY_RULES if r.name == name), None)
-        if rule is None:
-            raise CapabilityError(f"unknown capability {name!r}; known: {', '.join(lib.CAPABILITY_NAMES)}")
-        if not lib.gated_registers(rule, kind):
-            raise CapabilityError(f"capability {name!r}: model {kind} has no registers for it")
+        rule = _selectable(name, kind)
         if rule.rule == lib.RULE_ANY_OF:
-            if on:
-                raise CapabilityError(
-                    f"capability {name!r} combines {' or '.join(rule.members)}; switch on one of those instead"
-                )
-            # Off: every member off (members the model lacks are absent already).
-            members = {m: False for m in rule.members if lib.gated_registers(_rule(m), kind)}
-            sub, sub_notes = selection_overrides(profile, members)
+            sub, sub_notes = _combined(rule, kind, on, profile)
             overrides.update(sub)
             notes.extend(sub_notes)
             continue
         changes = _module(rule, kind, on, profile) if rule.rule == lib.RULE_MODULE else _special(rule, kind, on)
-        synthetic = []
-        for register, raw in changes.items():
-            key = _key(register)
-            overrides[key] = raw
-            if raw != profile.blocks[key[0]].value(key[1]):
-                synthetic.append(f"{key[0]} {key[1]} = {raw}")
-        state = "on" if on else "off"
-        notes.append(
-            f"capability selection {name}={state} (synthetic, not captured): {', '.join(synthetic) or 'no value changed'}"
-        )
+        notes.append(_apply(name, on, changes, profile, overrides))
     return overrides, notes
+
+
+def _selectable(name: str, kind: str) -> lib.CapabilityRule:
+    """The rule of a capability the model has registers for."""
+    rule = next((r for r in lib.CAPABILITY_RULES if r.name == name), None)
+    if rule is None:
+        raise CapabilityError(f"unknown capability {name!r}; known: {', '.join(lib.CAPABILITY_NAMES)}")
+    if not lib.gated_registers(rule, kind):
+        raise CapabilityError(f"capability {name!r}: model {kind} has no registers for it")
+    return rule
+
+
+def _combined(rule: lib.CapabilityRule, kind: str, on: bool, profile: Profile):
+    """A RULE_ANY_OF capability can only be switched off, by switching every member off."""
+    if on:
+        raise CapabilityError(
+            f"capability {rule.name!r} combines {' or '.join(rule.members)}; switch on one of those instead"
+        )
+    # Off: every member off (members the model lacks are absent already).
+    members = {m: False for m in rule.members if lib.gated_registers(_rule(m), kind)}
+    return selection_overrides(profile, members)
+
+
+def _apply(name: str, on: bool, changes: dict[str, int], profile: Profile, overrides: dict) -> str:
+    """Add ``changes`` to ``overrides``; returns the note naming the values that differ from the capture."""
+    synthetic = []
+    for register, raw in changes.items():
+        key = _key(register)
+        overrides[key] = raw
+        if raw != profile.blocks[key[0]].value(key[1]):
+            synthetic.append(f"{key[0]} {key[1]} = {raw}")
+    state = "on" if on else "off"
+    return f"capability selection {name}={state} (synthetic, not captured): {', '.join(synthetic) or 'no value changed'}"
 
 
 def _rule(name: str) -> lib.CapabilityRule:
@@ -136,15 +150,19 @@ def _special(rule: lib.CapabilityRule, kind: str, on: bool) -> dict[str, int]:
             raise CapabilityError(f"capability {rule.name!r} is built into every {kind} unit and cannot be switched off")
         return {}
     if rule.rule == lib.RULE_ANY_POSITIVE:
-        signals = [s for s in rule.signals if _enabled(s, kind)]
-        on_value = {s: METER_PHASE_VOLTAGE if "_0_voltage" in s else 0.0 for s in signals}
-        return {s: _raw(s, on_value[s] if on else 0.0) for s in signals}
+        return _meter(rule, kind, on)
     if not on:
         # RULE_ANY_SET / RULE_SEEN_NONZERO: all-zero signals read as unknown, never absent.
         raise CapabilityError(
             f"capability {rule.name!r} cannot be switched off: with its signals at 0 detection reports unknown, not absent"
         )
     return {s: _raw(s, v) for s, v in SPECIAL_ON[rule.name].items() if _enabled(s, kind)}
+
+
+def _meter(rule: lib.CapabilityRule, kind: str, on: bool) -> dict[str, int]:
+    """Phase voltages at METER_PHASE_VOLTAGE when on; every signal at 0 when off."""
+    signals = [s for s in rule.signals if _enabled(s, kind)]
+    return {s: _raw(s, METER_PHASE_VOLTAGE if on and "_0_voltage" in s else 0.0) for s in signals}
 
 
 def parse_selection(specs: list[str]) -> dict[str, bool]:

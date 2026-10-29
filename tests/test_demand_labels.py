@@ -58,3 +58,13 @@ async def test_legacy_models_keep_the_upstream_table(mock_modbus_unit):
     data = await client.async_update(only_registers=[DEMAND])
     assert data[DEMAND] == "OFF"
     assert DEMAND not in client.labels
+
+
+@pytest.mark.parametrize("raw, label", [
+    (0, "OFF"), (1, "Manual Operation"), (2, "Defrost"), (3, "Hot water"), (4, "Heat"), (5, "Cool"),
+    (6, "Pool"), (7, "Anti legionella"), (8, "OFF"), (98, "Standby"), (99, "No demand"), (100, "OFF"),
+])
+async def test_legacy_status_table(mock_modbus_unit, raw, label):
+    mock_modbus_unit.load_raw({"input": {1: raw}})
+    client = ThermiaGenesis(unit=mock_modbus_unit, kind=MODEL_MEGA, delay=0)
+    assert (await client.async_update(only_registers=[DEMAND]))[DEMAND] == label

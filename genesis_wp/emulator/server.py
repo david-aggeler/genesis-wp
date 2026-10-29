@@ -136,13 +136,7 @@ class Emulator:
     connections: int = field(default=0, init=False)
 
     def __post_init__(self) -> None:
-        if self.capabilities:
-            values, notes = selection_overrides(self.profile, self.capabilities)
-            profile = self.profile.with_overrides(values)
-            source = {**profile.source, "notes": [*profile.source.get("notes", []), *notes]}
-            self.profile = replace(profile, source=source)
-        if self.overrides:
-            self.profile = self.profile.with_overrides(self.overrides)
+        self._apply_selection()
         self._rng = random.Random(self.seed)
         # A sensor served as not fitted stays so: dynamics never tick it (issue-12).
         not_fitted = self._not_fitted_inputs()
@@ -151,6 +145,24 @@ class Emulator:
             for d in self.profile.dynamics
             if not (d.block == INPUT_REGISTERS and d.address in not_fitted)
         ] if self.dynamics else []
+        self._init_heating(not_fitted)
+        self._init_clock()
+        self._paused = False
+        self._server: ModbusTcpServer | None = None
+        self._control: ControlServer | None = None
+        self._ticker: asyncio.Task | None = None
+
+    def _apply_selection(self) -> None:
+        """Serve the selected capabilities, then the raw overrides on top."""
+        if self.capabilities:
+            values, notes = selection_overrides(self.profile, self.capabilities)
+            profile = self.profile.with_overrides(values)
+            source = {**profile.source, "notes": [*profile.source.get("notes", []), *notes]}
+            self.profile = replace(profile, source=source)
+        if self.overrides:
+            self.profile = self.profile.with_overrides(self.overrides)
+
+    def _init_heating(self, not_fitted: frozenset[int]) -> None:
         # The heating model owns the curve points (room set points) whenever the profile has the
         # registers; with dynamics on it also owns the process inputs it computes.
         self.heating: heating.HeatingModel | None = None
@@ -172,20 +184,19 @@ class Emulator:
                 # A stopped compressor stays stopped; the drift would put its speed back in range.
                 owned.add((INPUT_REGISTERS, heating.SPEED))
             self._drift = [d for d in self._drift if (d.spec.block, d.spec.address) not in owned]
+
+    def _init_clock(self) -> None:
         # Simulated clock (requirement-22): only with a climate profile, which needs the heating model.
         self._clock: datetime | None = None
         self._carry = 0.0  # simulated seconds not yet run as a whole step
-        if self.climate is not None:
-            if not self.dynamics or self.heating is None:
-                raise ValueError("a climate profile needs dynamics and a profile with the heating registers")
-            self._check_speed(self.playback_speed)
-            self._clock = self.start_time or datetime.now().replace(second=0, microsecond=0)
-            self.heating.walk_outdoor = False
-            self._feed_outdoor()
-        self._paused = False
-        self._server: ModbusTcpServer | None = None
-        self._control: ControlServer | None = None
-        self._ticker: asyncio.Task | None = None
+        if self.climate is None:
+            return
+        if not self.dynamics or self.heating is None:
+            raise ValueError("a climate profile needs dynamics and a profile with the heating registers")
+        self._check_speed(self.playback_speed)
+        self._clock = self.start_time or datetime.now().replace(second=0, microsecond=0)
+        self.heating.walk_outdoor = False
+        self._feed_outdoor()
 
     # ---- public API -------------------------------------------------------------
 
@@ -369,16 +380,7 @@ class Emulator:
         lists = []
         for name in BLOCKS:
             block = self.profile.blocks[name]
-            entries = []
-            for start, end in block.ranges:
-                raw = [block.value(a) for a in range(start, end + 1)]
-                if block.is_bits:
-                    entries.append(SimData(start, values=[bool(v) for v in raw], datatype=DataType.BITS))
-                else:
-                    # DataType.REGISTERS packs as signed int16; pass raw words in that form.
-                    signed = [v - 0x10000 if v >= 0x8000 else v for v in raw]
-                    entries.append(SimData(start, values=signed, datatype=DataType.REGISTERS))
-            lists.append(entries)
+            lists.append([_sim_data(block, start, end) for start, end in block.ranges])
         # SimDevice tuple order: coils, discrete inputs, holding registers, input registers.
         return SimDevice(id=self.profile.unit_id, simdata=tuple(lists), action=self._action)
 
@@ -388,36 +390,44 @@ class Emulator:
         for drift in self._drift:
             if drift.spec.block == block:
                 registers[drift.spec.address - start_address] = drift.value & 0xFFFF
-        if self.heating is not None:
-            if block == INPUT_REGISTERS and self.dynamics:
-                for address, raw in self.heating.inputs().items():
-                    registers[address - start_address] = raw
-            elif block == HOLDING_REGISTERS:
-                if values is not None and self.apply_writes:
-                    for offset, raw in enumerate(values):
-                        self.heating.write(address + offset, raw & 0xFFFF)
-                # After the write, so a room set point write shows its curve shift at once.
-                for owned, raw in self.heating.holding_registers().items():
-                    registers[owned - start_address] = raw
-            elif block == COILS and values is not None and self.apply_writes:
-                for offset, bit in enumerate(values):
-                    self.heating.write_coil(address + offset, bool(bit))
-            elif block == DISCRETE_INPUTS and self.dynamics:
-                for bit_address, on in self.heating.discrete_inputs().items():
-                    index = bit_address - start_address * 16
-                    word, bit = divmod(index, 16)
-                    if 0 <= word < len(registers):
-                        registers[word] = registers[word] | (1 << bit) if on else registers[word] & ~(1 << bit)
+        if self.heating is not None and block in self._HEATING_ACTIONS:
+            self._HEATING_ACTIONS[block](self, start_address, address, registers, values)
         if values is not None and not self.apply_writes:
-            # Keep the current state: overwrite the incoming values with what is stored.
-            if block in (COILS, DISCRETE_INPUTS):
-                bits = _registers_to_bits(registers)
-                first = address - start_address * 16
-                values[:] = bits[first : first + len(values)]
-            else:
-                first = address - start_address
-                values[:] = registers[first : first + len(values)]
+            _keep_state(block, start_address, address, registers, values)
         return None
+
+    def _heating_inputs(self, start_address, address, registers, values) -> None:
+        if self.dynamics:
+            for owned, raw in self.heating.inputs().items():
+                registers[owned - start_address] = raw
+
+    def _heating_holding(self, start_address, address, registers, values) -> None:
+        if values is not None and self.apply_writes:
+            for offset, raw in enumerate(values):
+                self.heating.write(address + offset, raw & 0xFFFF)
+        # After the write, so a room set point write shows its curve shift at once.
+        for owned, raw in self.heating.holding_registers().items():
+            registers[owned - start_address] = raw
+
+    def _heating_coils(self, start_address, address, registers, values) -> None:
+        if values is not None and self.apply_writes:
+            for offset, bit in enumerate(values):
+                self.heating.write_coil(address + offset, bool(bit))
+
+    def _heating_discrete_inputs(self, start_address, address, registers, values) -> None:
+        if not self.dynamics:
+            return
+        for bit_address, on in self.heating.discrete_inputs().items():
+            word, bit = divmod(bit_address - start_address * 16, 16)
+            if 0 <= word < len(registers):
+                registers[word] = registers[word] | (1 << bit) if on else registers[word] & ~(1 << bit)
+
+    _HEATING_ACTIONS = {
+        INPUT_REGISTERS: _heating_inputs,
+        HOLDING_REGISTERS: _heating_holding,
+        COILS: _heating_coils,
+        DISCRETE_INPUTS: _heating_discrete_inputs,
+    }
 
     def _has_heating_registers(self) -> bool:
         holding, inputs = self.profile.blocks[HOLDING_REGISTERS], self.profile.blocks[INPUT_REGISTERS]
@@ -498,6 +508,25 @@ def _rejection(function_code: int, code: ExcCodes):
 def _registers_to_bits(registers: list[int]) -> list[bool]:
     """Unpack registers into bits, bit 0 of register 0 first (pymodbus SimUtils order)."""
     return [bool(reg >> i & 1) for reg in registers for i in range(16)]
+
+
+def _sim_data(block, start: int, end: int) -> SimData:
+    raw = [block.value(a) for a in range(start, end + 1)]
+    if block.is_bits:
+        return SimData(start, values=[bool(v) for v in raw], datatype=DataType.BITS)
+    # DataType.REGISTERS packs as signed int16; pass raw words in that form.
+    return SimData(start, values=[v - 0x10000 if v >= 0x8000 else v for v in raw], datatype=DataType.REGISTERS)
+
+
+def _keep_state(block, start_address: int, address: int, registers: list[int], values: list) -> None:
+    """Refuse a write's effect: overwrite the incoming values with what is stored."""
+    if block in (COILS, DISCRETE_INPUTS):
+        bits = _registers_to_bits(registers)
+        first = address - start_address * 16
+        values[:] = bits[first : first + len(values)]
+    else:
+        first = address - start_address
+        values[:] = registers[first : first + len(values)]
 
 
 def _free_port(host: str) -> int:

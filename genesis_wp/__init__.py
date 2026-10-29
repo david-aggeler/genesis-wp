@@ -1,4 +1,4 @@
-﻿"""
+"""
 Python wrapper for getting data from Thermie Genesis heatpump using Modbus TCP
 """
 
@@ -75,6 +75,39 @@ def words_to_long(words, big_endian=True):
     """Combine two 16-bit registers into one unsigned 32-bit value."""
     high, low = (words[0], words[1]) if big_endian else (words[1], words[0])
     return (high << 16) | low
+
+
+def _int16(word):
+    """Signed 16-bit value; 32767 reads as 0 (upstream decoding)."""
+    if word == 32767:
+        return 0
+    return word - 65536 if word > 32767 else word
+
+
+def _last_word(meta):
+    """Address of a register's last word: long registers span two."""
+    return meta[KEY_ADDRESS] + (1 if meta[KEY_DATATYPE] in (TYPE_LONG, TYPE_LONG_LE) else 0)
+
+
+# Decoders by datatype for words that need combining or a sign; bits and uint pass through.
+_WORD_DECODERS = {
+    TYPE_LONG: lambda words, i: words_to_long(words[i : i + 2]),
+    TYPE_LONG_LE: lambda words, i: words_to_long(words[i : i + 2], False),
+    TYPE_INT: lambda words, i: _int16(words[i]),
+}
+
+# Upstream status labels for models without a documented enum (mega, inverter); others read "OFF".
+_LEGACY_STATUS_LABELS = {
+    1: "Manual Operation", 2: "Defrost", 3: "Hot water", 4: "Heat", 5: "Cool",
+    6: "Pool", 7: "Anti legionella", 98: "Standby", 99: "No demand",
+}
+
+_READ_METHODS = {
+    REG_COIL: "read_coils",
+    REG_DISCRETE_INPUT: "read_discrete_inputs",
+    REG_INPUT: "read_input_registers",
+    REG_HOLDING: "read_holding_registers",
+}
 
 
 class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
@@ -315,85 +348,8 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         return value
 
     async def _get_data(self, registers):
-        """Retreive data from heat pump."""
-        raw_data = {}
-        # Split into requests that reads up to self.MAX_REGISTERS within REGISTER_RANGES (register blocks) for the requested registers
-        first_chunk_address = 0
-        current_type = None
-        chunks = []
-        chunk = None
-        for name in registers:
-            meta = REGISTERS[name]
-
-            if name == ATTR_HOLDING_FIXED_SYSTEM_SUPPLY_SET_POINT:
-                # This will give an errror unless coil 42 is True, so skip if we don't know this or if it's false
-                enableAttr = ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT
-                skip = False
-                if enableAttr not in raw_data and enableAttr not in self.data:
-                    _LOGGER.debug(
-                        f"Will not read {name} since we don't know if {ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT} is set, include this register in the request to read this"
-                    )
-                    skip = True
-                # .get: at planning time raw_data is still empty, and on a later update only self.data has it
-                elif (
-                    not raw_data.get(ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT)
-                    and not self.data.get(ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT)
-                ):
-                    _LOGGER.debug(
-                        f"Will not read {name} since {ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT} is False which disables this register"
-                    )
-                    skip = True
-                if skip:
-                    # A skipped register ends the chunk: no request may span it (issue-7)
-                    if chunk != None:
-                        chunks.append(chunk)
-                        chunk = None
-                    continue
-
-            reg_address = meta[KEY_ADDRESS]
-            if (
-                chunk == None  # First iteration
-                or chunk[KEY_REG_TYPE] != meta[KEY_REG_TYPE]  # New register type
-                or (reg_address - chunk["start"])
-                >= self.MAX_REGISTERS  # Exceeds max number of registers per request
-                or reg_address > chunk["range_end"]
-            ):  # Address belongs to another register block
-                if chunk != None:
-                    chunks.append(chunk)
-                start = meta[KEY_ADDRESS]
-                chunk = {
-                    KEY_REG_TYPE: meta[KEY_REG_TYPE],
-                    "start": start,
-                    "slots": {name: 0},
-                }
-
-                if (
-                    meta[KEY_DATATYPE] == TYPE_LONG
-                    or meta[KEY_DATATYPE] == TYPE_LONG_LE
-                ):
-                    chunk["end"] = start + 1
-                else:
-                    chunk["end"] = start
-
-                in_range = list(
-                    filter(
-                        lambda x: x[0] <= start and x[1] >= start,
-                        REGISTER_RANGES[self._kind][meta[KEY_REG_TYPE]],
-                    )
-                )
-                chunk["range_end"] = in_range[0][1]
-
-            else:
-                chunk["slots"][name] = reg_address - start
-                if (
-                    meta[KEY_DATATYPE] == TYPE_LONG
-                    or meta[KEY_DATATYPE] == TYPE_LONG_LE
-                ):
-                    chunk["end"] = reg_address + 1
-                else:
-                    chunk["end"] = reg_address
-        if chunk != None:
-            chunks.append(chunk)
+        """Retrieve data from heat pump."""
+        chunks = self._plan_chunks(registers)
         _LOGGER.debug(
             f"Will make {len(chunks)} requests to read {len(registers)} registers"
         )
@@ -401,110 +357,11 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         unit = await self._ensure_unit()
         self.unread = set()
         self._enum_raw = {}
+        raw_data = {}
         failure = None
         try:
             for chunk in chunks:
-                await asyncio.sleep(self._delay)
-                start_address = chunk["start"]
-                length = chunk["end"] - chunk["start"] + 1
-                regtype = chunk[KEY_REG_TYPE]
-                _LOGGER.debug(f"Reading {regtype} {start_address} length {length}")
-                read_data = None
-                try:
-                    if regtype == REG_COIL:
-                        read_data = await unit.read_coils(start_address, length)
-                    elif regtype == REG_DISCRETE_INPUT:
-                        read_data = await unit.read_discrete_inputs(start_address, length)
-                    elif regtype == REG_INPUT:
-                        read_data = await unit.read_input_registers(start_address, length)
-                    elif regtype == REG_HOLDING:
-                        read_data = await unit.read_holding_registers(
-                            start_address, length
-                        )
-                except ModbusExceptionError as err:
-                    # The device answered but refused this range: lose only this chunk.
-                    self._chunk_unread(chunk, length, err)
-                    continue
-                if read_data:
-                    for i, (name, address) in enumerate(chunk["slots"].items()):
-                        info = REGISTERS[name]
-                        datatype = info[KEY_DATATYPE]
-                        scale = info[KEY_SCALE]
-                        val = read_data[address]
-                        not_fitted = info.get(KEY_NOT_FITTED, {}).get(self._kind)
-                        if not_fitted is not None and val == not_fitted:
-                            raw_data[name] = None  # sensor not fitted
-                            continue
-                        if datatype == TYPE_LONG:
-                            regs = read_data[address : (address + 2)]
-                            val = words_to_long(regs)
-                        elif datatype == TYPE_LONG_LE:
-                            regs = read_data[address : (address + 2)]
-                            val = words_to_long(regs, False)
-                        elif datatype == TYPE_INT:
-                            if val == 32767:
-                                val = 0
-                            if val > 32767:
-                                val = val - 65536
-                        elif datatype == TYPE_STATUS and info.get(KEY_ENUM, {}).get(self._kind) is not None:
-                            # Documented demand values (issue-10); an undocumented one stays raw.
-                            self._enum_raw[name] = val
-                            val = info[KEY_ENUM][self._kind].get(val, val)
-                        elif datatype == TYPE_STATUS:
-                            status_str = "OFF"
-                            if val == 1:
-                                status_str = "Manual Operation"
-                            elif val == 2:
-                                status_str = "Defrost"
-                            elif val == 3:
-                                status_str = "Hot water"
-                            elif val == 4:
-                                status_str = "Heat"
-                            elif val == 5:
-                                status_str = "Cool"
-                            elif val == 6:
-                                status_str = "Pool"
-                            elif val == 7:
-                                status_str = "Anti legionella"
-                            elif val == 98:
-                                status_str = "Standby"
-                            elif val == 99:
-                                status_str = "No demand"
-                            val = status_str
-
-                        if scale != 1:
-                            val = val / scale
-                        raw_data[name] = val
-                else:
-                    self._chunk_unread(chunk, length, "empty response")
-            # for regtype in register_types:
-            #    last_chunk_address = 0
-            #    values = []
-            #    for chunk in REGISTER_RANGES[self._kind][regtype]:
-            #        await asyncio.sleep(self._delay)
-            #        start_address = chunk[0]
-            #        length = chunk[1] - start_address
-            #        #Insert 0 if there is a gap
-            #        values.extend([0] * (start_address - last_chunk_address))
-            #        _LOGGER.debug(f"Reading {regtype} {start_address} length {length}")
-            #        read_data = None
-            #        if(regtype == REG_COIL):
-            #            read_data = self._client.read_coils(start_address, length)
-            #        elif(regtype == REG_DISCRETE_INPUT):
-            #            read_data = self._client.read_discrete_inputs(start_address, length)
-            #        elif(regtype == REG_INPUT):
-            #            read_data = self._client.read_input_registers(start_address, length)
-            #        elif(regtype == REG_HOLDING):
-            #            read_data = self._client.read_holding_registers(start_address, length)
-            #        if read_data:
-            #            values.extend(read_data)
-            #        else:
-            #            if self._client.last_error() > 0:
-            #                print(f'error {self._client.last_error()}')
-            #                _LOGGER.error(f'error {self._client.last_error()}')
-            #            raise Exception(f"Failed to read {regtype} {start_address} length {length}", self._client.last_error())
-            #        last_chunk_address = chunk[1]
-            #    raw_data[regtype] = values
+                await self._read_chunk(unit, chunk, raw_data)
         except (ModbusConnectionError, ModbusTimeoutError, OSError) as err:
             # A lost link or timeout fails the whole update; only refused chunks are isolated.
             failure = err
@@ -515,6 +372,109 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             raise self._connection_failed("Lost the connection to", failure) from None
 
         return raw_data
+
+    def _plan_chunks(self, registers):
+        """Split the registers into requests of up to MAX_REGISTERS inside one register block."""
+        chunks = []
+        chunk = None
+        for name in registers:
+            meta = REGISTERS[name]
+            if name == ATTR_HOLDING_FIXED_SYSTEM_SUPPLY_SET_POINT and self._skip_fixed_supply_set_point(name):
+                # A skipped register ends the chunk: no request may span it (issue-7)
+                if chunk is not None:
+                    chunks.append(chunk)
+                    chunk = None
+                continue
+            if chunk is None or not self._fits(chunk, meta):
+                if chunk is not None:
+                    chunks.append(chunk)
+                chunk = self._new_chunk(name, meta)
+            else:
+                chunk["slots"][name] = meta[KEY_ADDRESS] - chunk["start"]
+                chunk["end"] = _last_word(meta)
+        if chunk is not None:
+            chunks.append(chunk)
+        return chunks
+
+    def _skip_fixed_supply_set_point(self, name):
+        """The fixed supply set point errors unless coil 42 is known to be True."""
+        enable = ATTR_COIL_ENABLE_FIXED_SYSTEM_SUPPLY_SET_POINT
+        if enable not in self.data:
+            _LOGGER.debug(
+                f"Will not read {name} since we don't know if {enable} is set, include this register in the request to read this"
+            )
+            return True
+        if not self.data.get(enable):
+            _LOGGER.debug(
+                f"Will not read {name} since {enable} is False which disables this register"
+            )
+            return True
+        return False
+
+    def _fits(self, chunk, meta):
+        """Whether a register extends the chunk: same type, within MAX_REGISTERS and the block."""
+        address = meta[KEY_ADDRESS]
+        return (
+            chunk[KEY_REG_TYPE] == meta[KEY_REG_TYPE]
+            and address - chunk["start"] < self.MAX_REGISTERS
+            and address <= chunk["range_end"]
+        )
+
+    def _new_chunk(self, name, meta):
+        start = meta[KEY_ADDRESS]
+        in_range = [r for r in REGISTER_RANGES[self._kind][meta[KEY_REG_TYPE]] if r[0] <= start <= r[1]]
+        return {
+            KEY_REG_TYPE: meta[KEY_REG_TYPE],
+            "start": start,
+            "slots": {name: 0},
+            "end": _last_word(meta),
+            "range_end": in_range[0][1],
+        }
+
+    async def _read_chunk(self, unit, chunk, raw_data):
+        """Read one chunk and decode its registers into raw_data; a refused chunk is unread."""
+        await asyncio.sleep(self._delay)
+        start_address = chunk["start"]
+        length = chunk["end"] - chunk["start"] + 1
+        regtype = chunk[KEY_REG_TYPE]
+        _LOGGER.debug(f"Reading {regtype} {start_address} length {length}")
+        read = _READ_METHODS.get(regtype)
+        try:
+            read_data = await getattr(unit, read)(start_address, length) if read else None
+        except ModbusExceptionError as err:
+            # The device answered but refused this range: lose only this chunk.
+            self._chunk_unread(chunk, length, err)
+            return
+        if not read_data:
+            self._chunk_unread(chunk, length, "empty response")
+            return
+        for name, offset in chunk["slots"].items():
+            raw_data[name] = self._decode(name, read_data, offset)
+
+    def _decode(self, name, words, offset):
+        """Decode one register from its chunk's words, driven by its register fields."""
+        info = REGISTERS[name]
+        val = words[offset]
+        not_fitted = info.get(KEY_NOT_FITTED, {}).get(self._kind)
+        if not_fitted is not None and val == not_fitted:
+            return None  # sensor not fitted
+        datatype = info[KEY_DATATYPE]
+        if datatype == TYPE_STATUS:
+            val = self._decode_status(name, info, val)
+        elif datatype in _WORD_DECODERS:
+            val = _WORD_DECODERS[datatype](words, offset)
+        scale = info[KEY_SCALE]
+        if scale != 1:
+            val = val / scale
+        return val
+
+    def _decode_status(self, name, info, val):
+        table = info.get(KEY_ENUM, {}).get(self._kind)
+        if table is None:
+            return _LEGACY_STATUS_LABELS.get(val, "OFF")
+        # Documented demand values (issue-10); an undocumented one stays raw.
+        self._enum_raw[name] = val
+        return table.get(val, val)
 
     def _chunk_unread(self, chunk, length, reason):
         """Record a chunk's registers as unread; their values stay absent, never stale."""

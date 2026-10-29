@@ -186,36 +186,12 @@ def apply_supplement(path: Path, values: dict, spans: dict) -> str:
 
 def convert(probe_dir: Path, software: str, controller: str, captured: str, supplements: list[Path] = ()) -> dict:
     summary = json.loads((probe_dir / "summary.json").read_text())
-    unknown = set(summary) - SUMMARY_FIELDS
-    if unknown:
-        sys.exit(f"error: summary.json has unknown fields {sorted(unknown)} — review for identifiers first")
-    if summary["kind"] != KIND:
-        sys.exit(f"error: capture is for {summary['kind']}, expected {KIND}")
-    if summary["firmware"] != software:
-        sys.exit(f"error: capture firmware {summary['firmware']} != --software {software}")
+    check_summary(summary, software)
 
     library_values = json.loads((probe_dir / "library_values.json").read_text())
-    values: dict[str, dict[int, int]] = {b: {} for b in BLOCK_OF.values()}
-    for name, value in library_values.items():
-        if value is None:
-            continue  # not read (holding 116 is skipped while coil 41 is off)
-        block = BLOCK_OF[REGISTERS[name][KEY_REG_TYPE]]
-        values[block].update(to_raw(name, value))
-
+    values = library_raw(library_values)
     spans = probe_read_spans()
-    for label, (block, first) in EXTRAS.items():
-        extra = summary["extras"][label]
-        if extra.get("error") or extra.get("except"):
-            sys.exit(f"error: extra read {label} failed in the capture")
-        raws = [int(v) for v in extra["raw"]]
-        spans[block].append((first, first + len(raws) - 1))
-        for offset, raw in enumerate(raws):
-            address = first + offset
-            # Extras were read moments after the library pass. Where both exist, keep the
-            # library value so the snapshot stays one instant; extras only fill gaps.
-            if address in values[block] and values[block][address] != raw:
-                print(f"note: {block} {address}: library {values[block][address]} kept, extra read {raw}")
-            values[block].setdefault(address, raw)
+    apply_extras(summary, values, spans)
 
     # Inputs 57-59: Genesis controller version, confirmed by a raw follow-up read and the
     # display ("Steuerung"). Inside the library's input span, but not a library register.
@@ -223,34 +199,6 @@ def convert(probe_dir: Path, software: str, controller: str, captured: str, supp
         values["input_registers"][57 + offset] = int(part)
 
     supplement_notes = [apply_supplement(path, values, spans) for path in supplements]
-
-    blocks = {}
-    for block in BLOCK_OF.values():
-        ranges = merge(spans[block])
-        outside = [a for a in values[block] if not any(s <= a <= e for s, e in ranges)]
-        if outside:
-            sys.exit(f"error: {block} values outside answered ranges: {outside}")
-        blocks[block] = {
-            "ranges": ranges,
-            "values": {str(a): values[block][a] for a in sorted(values[block])},
-        }
-
-    dynamics = []
-    for name, (spread, step) in DYNAMICS.items():
-        meta = REGISTERS[name]
-        address = meta[KEY_ADDRESS]
-        raw = values["input_registers"][address]
-        signed = raw - 0x10000 if meta[KEY_DATATYPE] == TYPE_INT and raw >= 0x8000 else raw
-        low = signed - spread if meta[KEY_DATATYPE] == TYPE_INT else max(0, signed - spread)
-        dynamics.append({
-            "block": "input_registers",
-            "address": address,
-            "name": name.removeprefix("input_"),
-            "signed": meta[KEY_DATATYPE] == TYPE_INT,
-            "min": low,
-            "max": signed + spread,
-            "max_step": step,
-        })
 
     return {
         "format": "genesis-wp-profile/1",
@@ -275,8 +223,80 @@ def convert(probe_dir: Path, software: str, controller: str, captured: str, supp
                 *supplement_notes,
             ],
         },
-        "blocks": blocks,
-        "dynamics": dynamics,
+        "blocks": profile_blocks(values, spans),
+        "dynamics": [dynamic(name, spread, step, values) for name, (spread, step) in DYNAMICS.items()],
+    }
+
+
+def check_summary(summary: dict, software: str) -> None:
+    """Abort on an unknown field (identifier guard), another model or another firmware."""
+    unknown = set(summary) - SUMMARY_FIELDS
+    if unknown:
+        sys.exit(f"error: summary.json has unknown fields {sorted(unknown)} — review for identifiers first")
+    if summary["kind"] != KIND:
+        sys.exit(f"error: capture is for {summary['kind']}, expected {KIND}")
+    if summary["firmware"] != software:
+        sys.exit(f"error: capture firmware {summary['firmware']} != --software {software}")
+
+
+def library_raw(library_values: dict) -> dict[str, dict[int, int]]:
+    """Raw values by block and address from the library's decoded values."""
+    values: dict[str, dict[int, int]] = {b: {} for b in BLOCK_OF.values()}
+    for name, value in library_values.items():
+        if value is None:
+            continue  # not read (holding 116 is skipped while coil 41 is off)
+        block = BLOCK_OF[REGISTERS[name][KEY_REG_TYPE]]
+        values[block].update(to_raw(name, value))
+    return values
+
+
+def apply_extras(summary: dict, values: dict, spans: dict) -> None:
+    """Add the summary's extra raw reads; they fill gaps and never replace a library value."""
+    for label, (block, first) in EXTRAS.items():
+        extra = summary["extras"][label]
+        if extra.get("error") or extra.get("except"):
+            sys.exit(f"error: extra read {label} failed in the capture")
+        raws = [int(v) for v in extra["raw"]]
+        spans[block].append((first, first + len(raws) - 1))
+        for offset, raw in enumerate(raws):
+            address = first + offset
+            # Extras were read moments after the library pass. Where both exist, keep the
+            # library value so the snapshot stays one instant; extras only fill gaps.
+            if address in values[block] and values[block][address] != raw:
+                print(f"note: {block} {address}: library {values[block][address]} kept, extra read {raw}")
+            values[block].setdefault(address, raw)
+
+
+def profile_blocks(values: dict, spans: dict) -> dict:
+    """Merged ranges and sorted values per block; a value outside every range aborts."""
+    blocks = {}
+    for block in BLOCK_OF.values():
+        ranges = merge(spans[block])
+        outside = [a for a in values[block] if not any(s <= a <= e for s, e in ranges)]
+        if outside:
+            sys.exit(f"error: {block} values outside answered ranges: {outside}")
+        blocks[block] = {
+            "ranges": ranges,
+            "values": {str(a): values[block][a] for a in sorted(values[block])},
+        }
+    return blocks
+
+
+def dynamic(name: str, spread: int, step: int, values: dict) -> dict:
+    """Dynamics bounds around the captured raw value; unsigned registers stay at or above 0."""
+    meta = REGISTERS[name]
+    address = meta[KEY_ADDRESS]
+    signed_type = meta[KEY_DATATYPE] == TYPE_INT
+    raw = values["input_registers"][address]
+    signed = raw - 0x10000 if signed_type and raw >= 0x8000 else raw
+    return {
+        "block": "input_registers",
+        "address": address,
+        "name": name.removeprefix("input_"),
+        "signed": signed_type,
+        "min": signed - spread if signed_type else max(0, signed - spread),
+        "max": signed + spread,
+        "max_step": step,
     }
 
 

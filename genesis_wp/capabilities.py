@@ -179,12 +179,31 @@ def _evidence(name: str, data: Mapping) -> str:
 
 
 def _module(rule: CapabilityRule, kind: str, data: Mapping, seen: set[str]) -> tuple[str, list[str], bool | None]:
-    evidence = []
-    coil = None
-    if _enabled(rule.enable, kind):
-        evidence.append(_evidence(rule.enable, data))
-        if rule.enable in data:
-            coil = bool(data[rule.enable])
+    evidence, coil = _coil(rule, kind, data)
+    fitted = _fitted(rule, kind, data, evidence)
+    running = [name for name in rule.running if _enabled(name, kind)]
+    running_now = any(data.get(name) for name in running)
+    if running_now:
+        seen.add(rule.name)  # recorded whatever decides the state now, so it holds after switch-off
+    if fitted:
+        return (PRESENT if any(fitted) else ABSENT), evidence, coil
+    if coil:
+        return PRESENT, evidence, coil
+    evidence.extend(_evidence(name, data) for name in running)
+    if rule.name in seen and not running_now:
+        evidence.append("seen running in an earlier update")
+    return (PRESENT if rule.name in seen else UNKNOWN), evidence, coil
+
+
+def _coil(rule: CapabilityRule, kind: str, data: Mapping) -> tuple[list[str], bool | None]:
+    """Evidence and state of the module's enable coil (None when it has none or it was not read)."""
+    if not _enabled(rule.enable, kind):
+        return [], None
+    return [_evidence(rule.enable, data)], bool(data[rule.enable]) if rule.enable in data else None
+
+
+def _fitted(rule: CapabilityRule, kind: str, data: Mapping, evidence: list[str]) -> list[bool]:
+    """Fitted flags of the read sensors with a declared not-fitted sentinel; appends their evidence."""
     fitted = []
     for sensor in rule.sensors:
         if not _enabled(sensor, kind) or REGISTERS[sensor].get(KEY_NOT_FITTED, {}).get(kind) is None:
@@ -192,22 +211,57 @@ def _module(rule: CapabilityRule, kind: str, data: Mapping, seen: set[str]) -> t
         evidence.append(_evidence(sensor, data))
         if sensor in data:
             fitted.append(data[sensor] is not None)
-    running = [name for name in rule.running if _enabled(name, kind)]
-    if any(data.get(name) for name in running):
-        seen.add(rule.name)  # recorded whatever decides the state now, so it holds after switch-off
-    if fitted:
-        return (PRESENT if any(fitted) else ABSENT), evidence, coil
-    if coil:
-        return PRESENT, evidence, coil
-    evidence.extend(_evidence(name, data) for name in running)
-    if rule.name in seen and not any(data.get(name) for name in running):
-        evidence.append("seen running in an earlier update")
-    return (PRESENT if rule.name in seen else UNKNOWN), evidence, coil
+    return fitted
 
 
 def _signals(rule: CapabilityRule, kind: str, data: Mapping) -> tuple[list, list[str]]:
     names = [name for name in rule.signals if _enabled(name, kind)]
     return [data[name] for name in names if name in data and data[name] is not None], [_evidence(n, data) for n in names]
+
+
+def _built_in(rule, kind, data, seen, gates, result):
+    return PRESENT, [f"built into every {kind} unit ({len(gates)} registers)"], None
+
+
+def _any_positive(rule, kind, data, seen, gates, result):
+    values, evidence = _signals(rule, kind, data)
+    return (PRESENT if any(v > 0 for v in values) else ABSENT if values else UNKNOWN), evidence, None
+
+
+def _any_set(rule, kind, data, seen, gates, result):
+    values, evidence = _signals(rule, kind, data)
+    return (PRESENT if any(values) else UNKNOWN), evidence, None
+
+
+def _any_of(rule, kind, data, seen, gates, result):
+    members = {m: result[m].state if m in result else ABSENT for m in rule.members}  # members precede it
+    states = set(members.values())
+    state = PRESENT if PRESENT in states else ABSENT if states == {ABSENT} else UNKNOWN
+    return state, [f"{m} = {s}" for m, s in members.items()], None
+
+
+def _seen_nonzero(rule, kind, data, seen, gates, result):
+    values, evidence = _signals(rule, kind, data)
+    if any(values):
+        seen.add(rule.name)
+    elif rule.name in seen:
+        evidence.append("seen non-zero in an earlier update")
+    return (PRESENT if rule.name in seen else UNKNOWN), evidence, None
+
+
+def _module_rule(rule, kind, data, seen, gates, result):
+    return _module(rule, kind, data, seen)
+
+
+# Evidence rule -> evaluator(rule, kind, data, seen, gates, result) -> (state, evidence, enabled).
+_EVALUATORS = {
+    RULE_MODULE: _module_rule,
+    RULE_BUILT_IN: _built_in,
+    RULE_ANY_POSITIVE: _any_positive,
+    RULE_ANY_SET: _any_set,
+    RULE_ANY_OF: _any_of,
+    RULE_SEEN_NONZERO: _seen_nonzero,
+}
 
 
 def evaluate(
@@ -229,31 +283,7 @@ def evaluate(
         gates = gated_registers(rule, kind)
         if not gates:
             continue
-        enabled = None
-        if rule.rule == RULE_MODULE:
-            state, evidence, enabled = _module(rule, kind, data, seen)
-        elif rule.rule == RULE_BUILT_IN:
-            state, evidence = PRESENT, [f"built into every {kind} unit ({len(gates)} registers)"]
-        elif rule.rule == RULE_ANY_POSITIVE:
-            values, evidence = _signals(rule, kind, data)
-            state = PRESENT if any(v > 0 for v in values) else ABSENT if values else UNKNOWN
-        elif rule.rule == RULE_ANY_SET:
-            values, evidence = _signals(rule, kind, data)
-            state = PRESENT if any(values) else UNKNOWN
-        elif rule.rule == RULE_ANY_OF:
-            members = {m: result[m].state if m in result else ABSENT for m in rule.members}  # members precede it
-            evidence = [f"{m} = {s}" for m, s in members.items()]
-            states = set(members.values())
-            state = PRESENT if PRESENT in states else ABSENT if states == {ABSENT} else UNKNOWN
-        elif rule.rule == RULE_SEEN_NONZERO:
-            values, evidence = _signals(rule, kind, data)
-            if any(values):
-                seen.add(rule.name)
-            elif rule.name in seen:
-                evidence.append("seen non-zero in an earlier update")
-            state = PRESENT if rule.name in seen else UNKNOWN
-        else:  # pragma: no cover - the table above is the only source of rules
-            raise ValueError(f"unknown rule {rule.rule!r}")
+        state, evidence, enabled = _EVALUATORS[rule.rule](rule, kind, data, seen, gates, result)
         if not evidence:
             evidence = [f"no evidence register enabled for {kind}"]
         overridden = rule.name in overrides

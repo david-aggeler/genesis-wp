@@ -100,8 +100,28 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 async def _run(args: argparse.Namespace) -> None:
-    specs = args.instance or [(DEFAULT_PROFILE, None)]
     climate = ClimateProfile.load(args.climate) if args.climate else None
+    emulators = _emulators(args, climate)
+    for emu in emulators:
+        await emu.start()
+        _announce(emu, climate)
+
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGINT, signal.SIGTERM):
+        loop.add_signal_handler(sig, stop.set)
+    try:
+        await stop.wait()
+    finally:
+        for emu in emulators:
+            await emu.stop()
+            writes = len(emu.writes)
+            print(f"{emu.profile.name}: {len(emu.requests)} requests, {writes} writes", flush=True)
+
+
+def _emulators(args: argparse.Namespace, climate: ClimateProfile | None) -> list[Emulator]:
+    """One emulator per --instance; instances without a port take the next one from --port."""
+    specs = args.instance or [(DEFAULT_PROFILE, None)]
     emulators = []
     next_port = args.port
     for index, (name, port) in enumerate(specs):
@@ -124,29 +144,19 @@ async def _run(args: argparse.Namespace) -> None:
             playback_speed=args.speed,
             control_port=control_port,
         ))
-    for emu in emulators:
-        await emu.start()
-        print(f"{emu.profile.name} (software {emu.profile.firmware['software']}) on {emu.host}:{emu.port}, unit {emu.profile.unit_id}", flush=True)
-        for note in emu.profile.source.get("notes", []):
-            if note.startswith("capability selection"):
-                print(f"  {note}", flush=True)
-        if emu.control_port is not None:
-            print(f"  control channel on {emu.host}:{emu.control_port}", flush=True)
-        if emu.simulated_time is not None:
-            print(f"  climate {climate.bucket} profile, simulated start {emu.simulated_time:%Y-%m-%d %H:%M}, "
-                  f"speed {emu.playback_speed:g}", flush=True)
+    return emulators
 
-    stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set)
-    try:
-        await stop.wait()
-    finally:
-        for emu in emulators:
-            await emu.stop()
-            writes = len(emu.writes)
-            print(f"{emu.profile.name}: {len(emu.requests)} requests, {writes} writes", flush=True)
+
+def _announce(emu: Emulator, climate: ClimateProfile | None) -> None:
+    print(f"{emu.profile.name} (software {emu.profile.firmware['software']}) on {emu.host}:{emu.port}, unit {emu.profile.unit_id}", flush=True)
+    for note in emu.profile.source.get("notes", []):
+        if note.startswith("capability selection"):
+            print(f"  {note}", flush=True)
+    if emu.control_port is not None:
+        print(f"  control channel on {emu.host}:{emu.control_port}", flush=True)
+    if emu.simulated_time is not None:
+        print(f"  climate {climate.bucket} profile, simulated start {emu.simulated_time:%Y-%m-%d %H:%M}, "
+              f"speed {emu.playback_speed:g}", flush=True)
 
 
 def build_ctl_parser() -> argparse.ArgumentParser:
