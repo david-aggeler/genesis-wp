@@ -191,27 +191,34 @@ class Profile:
         if not isinstance(self.model, str) or self.model not in MODEL_NAMES:
             raise ProfileError(f"unknown model {self.model!r}, expected one of {', '.join(MODEL_NAMES)}")
         for block in self.blocks.values():
-            for start, end in block.ranges:
-                if not 0 <= start <= end <= 0xFFFF:
-                    raise ProfileError(f"{block.name}: bad range [{start}, {end}]")
-            for address, value in block.values.items():
-                if not block.implemented(address):
-                    raise ProfileError(f"{block.name}: value at {address} outside every range")
-                limit = 1 if block.is_bits else 0xFFFF
-                if not 0 <= value <= limit:
-                    raise ProfileError(f"{block.name}: value {value} at {address} out of range")
+            _validate_block(block)
         for dyn in self.dynamics:
-            if dyn.block not in self.blocks or self.blocks[dyn.block].is_bits:
-                raise ProfileError(f"dynamics {dyn.name}: block must be a register block")
-            if not self.blocks[dyn.block].implemented(dyn.address):
-                raise ProfileError(f"dynamics {dyn.name}: address {dyn.address} not implemented")
-            if not dyn.min <= dyn.max or dyn.max_step < 1:
-                raise ProfileError(f"dynamics {dyn.name}: bad bounds or step")
+            self._validate_dynamic(dyn)
         for circuit, rule in self.room_set_points.items():
             if circuit not in CIRCUITS:
                 raise ProfileError(f"room_set_points: unknown circuit {circuit!r}, expected one of {', '.join(CIRCUITS)}")
             if circuit == "hc2" and rule.initial is None:
                 raise ProfileError("room_set_points: hc2 needs an initial value (it has no register)")
+
+    def _validate_dynamic(self, dyn: DynamicRegister) -> None:
+        if dyn.block not in self.blocks or self.blocks[dyn.block].is_bits:
+            raise ProfileError(f"dynamics {dyn.name}: block must be a register block")
+        if not self.blocks[dyn.block].implemented(dyn.address):
+            raise ProfileError(f"dynamics {dyn.name}: address {dyn.address} not implemented")
+        if not dyn.min <= dyn.max or dyn.max_step < 1:
+            raise ProfileError(f"dynamics {dyn.name}: bad bounds or step")
+
+
+def _validate_block(block: Block) -> None:
+    for start, end in block.ranges:
+        if not 0 <= start <= end <= 0xFFFF:
+            raise ProfileError(f"{block.name}: bad range [{start}, {end}]")
+    limit = 1 if block.is_bits else 0xFFFF
+    for address, value in block.values.items():
+        if not block.implemented(address):
+            raise ProfileError(f"{block.name}: value at {address} outside every range")
+        if not 0 <= value <= limit:
+            raise ProfileError(f"{block.name}: value {value} at {address} out of range")
 
 
 def load_profile(path: str | Path) -> Profile:

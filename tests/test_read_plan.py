@@ -7,6 +7,8 @@ gaps in the profiles' ranges; the WPE-I range table must not span them.
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 
 from genesis_wp import ThermiaGenesis
@@ -111,17 +113,18 @@ async def test_holding_116_is_read_alone_once_coil_41_enables_it(start_emulator)
 def test_wpe_i_read_ranges_stay_inside_the_profiles():
     ranges = REGISTER_RANGES[MODEL_STIEBEL_WPE_I_071]
     profiles = [get_profile(p) for p in PROFILES]
-    for reg_type, block in BLOCK_OF.items():
-        for start, end in ranges[reg_type]:
-            if (reg_type, start) == GATED and start == end:
-                continue
-            for profile in profiles:
-                assert profile.blocks[block].covers(start, end - start + 1), (profile.name, reg_type, start, end)
+    planned = [
+        (reg_type, block, start, end)
+        for reg_type, block in BLOCK_OF.items()
+        for start, end in ranges[reg_type]
+        if not ((reg_type, start) == GATED and start == end)
+    ]
+    for (reg_type, block, start, end), profile in itertools.product(planned, profiles):
+        assert profile.blocks[block].covers(start, end - start + 1), (profile.name, reg_type, start, end)
     for name, meta in REGISTERS.items():
-        if not meta[MODEL_STIEBEL_WPE_I_071]:
-            continue
-        address = meta[KEY_ADDRESS]
-        assert any(s <= address <= e for s, e in ranges[meta[KEY_REG_TYPE]]), name
+        if meta[MODEL_STIEBEL_WPE_I_071]:
+            address = meta[KEY_ADDRESS]
+            assert any(s <= address <= e for s, e in ranges[meta[KEY_REG_TYPE]]), name
     assert [116, 116] in ranges[REG_HOLDING]
 
 
