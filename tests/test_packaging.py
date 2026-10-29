@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.unit
+
 ROOT = Path(__file__).parent.parent
 DOCUMENT_SUFFIXES = (".pdf", ".png", ".jpg", ".jpeg", ".gif", ".tif", ".tiff", ".heic", ".webp")
 # sha256 of upstream's MIT permission text (from "Permission is hereby" to the end),

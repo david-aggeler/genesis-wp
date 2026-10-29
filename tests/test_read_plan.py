@@ -27,6 +27,8 @@ from genesis_wp.emulator import ProfileError, get_profile
 
 from .harness import PROFILE_615, PROFILES, WPE_I_KIND, decode_raw
 
+pytestmark = pytest.mark.fixture
+
 BLOCK_OF = {
     REG_COIL: "coils",
     REG_DISCRETE_INPUT: "discrete_inputs",

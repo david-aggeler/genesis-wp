@@ -16,6 +16,8 @@ import pytest
 from genesis_wp.emulator import climate
 from genesis_wp.emulator.climate import ClimateProfile
 
+pytestmark = pytest.mark.unit
+
 # A public reference point (Zürich city centre), never the owner's home.
 LATITUDE, LONGITUDE = 47.3769, 8.5417
 

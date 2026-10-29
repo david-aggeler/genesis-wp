@@ -7,12 +7,15 @@ import signal
 import sys
 from pathlib import Path
 
+import pytest
 from pymodbus.client import AsyncModbusTcpClient
 
 from genesis_wp.emulator.cli import _instance, build_parser, main
 from genesis_wp.emulator.server import _free_port
 
 from ..harness import PROFILE_606, PROFILE_615, UNIT
+
+pytestmark = pytest.mark.emulator
 
 
 def test_instance_spec():

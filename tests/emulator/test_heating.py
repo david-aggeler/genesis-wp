@@ -9,6 +9,8 @@ from genesis_wp.emulator.heating import interpolate
 
 from ..harness import PROFILE_615
 
+pytestmark = pytest.mark.dynamics
+
 HC1_NOW = (28, 33, 35, 38, 40, 45, 49)  # holding 6-12 after the owner's HC1 step (formal_review-1)
 HC2_NOW = (23, 28, 30, 33, 35, 40, 44)  # holding 109-115
 NAMES = ["input_outdoor_temperature", "input_system_supply_line_calculated_set_point",

@@ -11,6 +11,8 @@ from genesis_wp.emulator import ProfileError
 
 from ..harness import PROFILE_606, PROFILE_615, UNIT
 
+pytestmark = pytest.mark.dynamics
+
 HC1 = tuple(range(6, 13))  # holding 6-12
 HC2 = tuple(range(109, 116))  # holding 109-115
 HC1_AT_23 = (28, 33, 35, 38, 40, 45, 49)  # HC1 curve at 23.0 °C (formal_review-1)

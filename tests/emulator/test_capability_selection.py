@@ -14,6 +14,8 @@ from genesis_wp.emulator.cli import main
 
 from ..harness import PROFILE_615
 
+pytestmark = pytest.mark.emulator
+
 
 async def detected(emu):
     client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0)

@@ -9,6 +9,8 @@ from genesis_wp.const import KEY_NOT_FITTED, MODEL_MEGA, MODEL_STIEBEL_WPE_I_071
 
 from .harness import PROFILE_606, PROFILE_615, WPE_I_KIND
 
+pytestmark = pytest.mark.fixture
+
 
 async def update(emu, *registers):
     client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from pymodbus.constants import ExcCodes
 
 from genesis_wp.emulator import (
@@ -15,6 +16,8 @@ from genesis_wp.emulator import (
 )
 
 from ..harness import PROFILE_606, PROFILE_615, UNIT
+
+pytestmark = pytest.mark.emulator
 
 READERS = {
     COILS: "read_coils",

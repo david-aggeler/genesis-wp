@@ -10,6 +10,8 @@ from genesis_wp.const import MODEL_STIEBEL_WPE_I_071, REGISTERS
 
 from .harness import PROFILE_615, PROFILES
 
+pytestmark = pytest.mark.fixture
+
 
 async def updated_client(emu, **options) -> ThermiaGenesis:
     client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0, **options)

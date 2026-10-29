@@ -145,3 +145,38 @@ sudo scripts/setup-as-root.sh     # once per machine: python3-venv, python3-pip
 scripts/setup-as-user.sh          # .venv with dev dependencies pinned to Home Assistant's versions
 .venv/bin/python -m pytest
 ```
+
+The suite runs against the emulator and opens no connection beyond loopback. Every test
+module declares its class with a marker:
+
+| Marker | Meaning |
+|---|---|
+| `plant_read` | Invariants that hold on any healthy plant (decoding, types, plausible temperatures, documented enum values, the supply set point following the clamped heat curve) |
+| `fixture` | Compares against captured profile values or uses an emulator scenario |
+| `writes` | Writes registers |
+| `dynamics` | Needs emulator dynamics or the simulated clock |
+| `emulator` | Tests the emulator itself |
+| `emulator_control` | Uses the emulator control channel |
+| `unit` | Needs no device |
+
+### Running the tests against the real heat pump
+
+The plant read tests also run, read-only, against the real heat pump. A plant read test is
+trusted once it passes there; then the emulator has to pass it too. A live run is an
+owner-approved act every time, never automated:
+
+```sh
+GENESIS_WP_TEST_TARGET=live GENESIS_WP_LIVE_HOST=<host> .venv/bin/python -m pytest
+```
+
+`GENESIS_WP_LIVE_PORT` defaults to 502. On the live target:
+
+- Only `plant_read` tests run. Every other test is skipped and the reason names its class.
+- The plant is read once per run, one full update of about 36 requests.
+- Reads go through a unit that has no write methods, under the library's own read-only
+  client, so a write fails before a connection is made.
+- The network guard allows exactly the host's address and port. Log records have the host
+  replaced, and the report names the target only as `live`.
+
+A failing plant read test is a finding. Either the test asserts something the plant does not
+guarantee, or the profile or the library is wrong. File it as an issue.
