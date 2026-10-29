@@ -12,6 +12,11 @@ pytest
 pytest-asyncio
 pytest-cov
 
+# Complexity gate stage (scripts/check_complexity.py). Pinned: a new release may score
+# the same code differently, and the gate must not move without a change request.
+radon==6.0.1        # cyclomatic, MIT
+complexipy==8.3.0   # cognitive, MIT
+
 # Offline package builds in tests (pip wheel --no-build-isolation, setup.py sdist)
 setuptools
 wheel

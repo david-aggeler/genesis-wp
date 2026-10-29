@@ -198,6 +198,19 @@ module declares its class with a marker:
 | `emulator_control` | Uses the emulator control channel |
 | `unit` | Needs no device |
 
+### Coverage and complexity
+
+Plain `pytest` does not measure coverage. Two checks guard the tree, and the gate runner runs
+them, not the session that wrote the code (`transition_gates` in `openbrain-client.yaml`):
+
+```sh
+.venv/bin/python scripts/check_complexity.py   # every function ≤ 15 cyclomatic (radon) and cognitive (complexipy)
+.venv/bin/python scripts/check_coverage.py     # full suite; genesis_wp line+branch coverage ≥ 90 % (.coveragerc)
+```
+
+Both exit non-zero on a failure. The complexity check also fails on a file it cannot parse,
+such as one that starts with a byte order mark.
+
 ### Running the tests against the real heat pump
 
 The plant read tests also run, read-only, against the real heat pump. A plant read test is
