@@ -223,3 +223,40 @@ def test_issue_5_registers_carry_their_documented_unit_and_kind(block, address, 
     [meta] = [m for m in _wpe_i_registers().values() if (m[KEY_REG_TYPE], m[KEY_ADDRESS]) == (block, address)]
     assert meta.get(KEY_UNIT, {}).get(model, "undeclared") == unit
     assert meta.get(KEY_KIND, {}).get(model) == kind
+
+
+# DHF-REQ: genesis-wp/requirement-28  DHF-TEST: genesis-wp/ac-108
+def test_display_names_sit_only_on_registers_enabled_for_their_model():
+    from genesis_wp.const import KEY_NAME, KEY_NAME_DE
+
+    named = 0
+    for name, meta in REGISTERS.items():
+        for key in (KEY_NAME, KEY_NAME_DE):
+            labels = meta.get(key, {})
+            assert isinstance(labels, dict), (name, key)
+            for model, label in labels.items():
+                assert meta.get(model) is True, (name, key, model)
+                assert isinstance(label, str) and label.strip(), (name, key, model)
+                named += 1
+    assert named > 0
+
+
+# DHF-REQ: genesis-wp/requirement-28  DHF-TEST: genesis-wp/ac-110
+def test_reported_wpe_i_registers_carry_the_labels_of_their_source_rows():
+    from genesis_wp.const import KEY_ADDRESS, KEY_NAME, KEY_NAME_DE, KEY_REG_TYPE
+
+    from .register_sources import WPE_I_071_LABELS
+
+    reported = (
+        [("input", a) for a in (18, 40, 43, 147)] + [("dinput", a) for a in (36, 60, 209)]
+        + [("holding", a) for a in range(109, 116)]
+    )
+    assert set(WPE_I_071_LABELS) == set(reported)
+    model = MODEL_STIEBEL_WPE_I_071
+    registers = {(m[KEY_REG_TYPE], m[KEY_ADDRESS]): m for m in _wpe_i_registers().values()}
+    for key, fact in WPE_I_071_LABELS.items():
+        assert fact["name"] and fact["source"], key
+        meta = registers[key]
+        assert meta.get(KEY_NAME, {}).get(model) == fact["name"], key
+        assert meta.get(KEY_NAME_DE, {}).get(model) == fact["name_de"], key
+

@@ -145,3 +145,65 @@ UNIT_CORRECTIONS = {
                     " action_item-1)",
     },
 }
+
+# Display labels of the WPE-I (requirement-28, ac-110): (block, address) -> the English label, the
+# German row text (name_de, Stiebel rows only; the row's FC access note dropped) and the source row.
+# Each label translates its source row by the owner's rule (2026-10-29): Vorlauf -> supply,
+# Rücklauf -> return, Solltemperatur / Sollwert -> set temperature, Heizkreis / HK -> heating circuit.
+# Stiebel rows cite section and de facto address; discrete input 209 has no Stiebel row, so it cites
+# Thermia Genesis 17.1, where "Mix valve 1" is the circuit Stiebel calls Heizkreis 2 (section 2.3).
+STIEBEL = "Stiebel doc 372257-47978-0071"
+THERMIA = "Thermia Genesis 17.1"
+# Heating circuit 2 curve, holdings 109-114: outdoor temperature [°C] per address; 115 has a longer row.
+_HC2_CURVE_OUTDOOR = {109: "17", 110: "10", 111: "5", 112: "0", 113: "-5", 114: "-15"}
+WPE_I_071_LABELS = {
+    ("input", 18): {
+        "name": "Calculated system supply set temperature (T33)",
+        "name_de": "Berechneter Sollwert Systemzulauftemperatur auf T33",
+        "source": f"{STIEBEL} 2.2, 30019",
+    },
+    ("input", 40): {
+        "name": "Heating circuit 2 supply temperature (T32)",
+        "name_de": "Zulauftemperatur Heizkreis 2 T32",
+        "source": f"{STIEBEL} 2.3, 30041",
+    },
+    ("input", 43): {
+        "name": "Heating circuit 2 mixing valve control",
+        "name_de": "Ansteuerung Mischventil Heizkreis 2",
+        "source": f"{STIEBEL} 2.3, 30044",
+    },
+    ("input", 147): {
+        "name": "Heating/cooling circuit 2 supply set temperature",
+        "name_de": "Solltemperatur HK/Kühlkreis 2",
+        "source": f"{STIEBEL} 2.3, 30148",
+    },
+    ("dinput", 36): {
+        "name": "Alarm: heating circuit 2 supply sensor",
+        "name_de": "Alarm Zulaufleitungsfühler Heizkreis 2",
+        "source": f"{STIEBEL} 2.21, 10037",
+    },
+    ("dinput", 60): {
+        "name": "Alarm: heating circuit 2 supply temperature deviation",
+        "name_de": "Alarm Abweichung Vorlauftemperatur Heizkreis 2",
+        "source": f"{STIEBEL} 2.21, 10061",
+    },
+    ("dinput", 209): {
+        "name": "Heating circuit 2 circulation pump control signal",
+        "name_de": None,
+        "source": f"{THERMIA} 5.2 Mix valve 1, 10210: Mix valve 1 circulation pump control signal (EM)",
+    },
+    **{
+        ("holding", address): {
+            "name": f"Heating circuit 2 supply set temperature at {outdoor} °C outdoor",
+            "name_de": f"Vorlaufsolltemperatur HK2 bei {outdoor}°C AT",
+            "source": f"{STIEBEL} 2.3, {40001 + address}",
+        }
+        for address, outdoor in _HC2_CURVE_OUTDOOR.items()
+    },
+    ("holding", 115): {
+        "name": "Heating circuit 2 supply set temperature at -25 °C outdoor",
+        "name_de": "Sollwertkurve, Y-Koordinate 7 Heizkreis 2 (niedrigste Außentemperatur)"
+                   " Vorlaufsolltemperatur HK2 bei -25°C AT",
+        "source": f"{STIEBEL} 2.3, 40116",
+    },
+}
