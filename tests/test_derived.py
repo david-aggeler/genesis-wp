@@ -271,3 +271,10 @@ def test_a_backward_clock_step_restarts_the_window_instead_of_freezing_the_estim
     assert feed(estimator, STEADY, start=-3210, seconds=300).source == "calculated"
     repeated = estimator.add(-2910, STOPPED)  # same timestamp as the last sample: dropped
     assert repeated.source == "calculated"
+
+
+# formal_review-12 B1: the product rho * cp must itself be a positive finite number.
+@pytest.mark.parametrize("cp, density", [(1e-200, 1e-200), (1e200, 1e200)])
+def test_fluid_rejects_an_underflowing_or_overflowing_volumetric_heat_capacity(cp, density):
+    with pytest.raises(ValueError):
+        Fluid(cp=cp, density=density, source="x")

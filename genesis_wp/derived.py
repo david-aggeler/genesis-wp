@@ -84,6 +84,10 @@ class Fluid:
             value = getattr(self, name)
             if _finite(value) is None or value <= 0:
                 raise ValueError(f"fluid {name} must be a positive finite number, got {value!r}")
+        # Each factor can be valid while their product underflows to 0 or overflows to inf.
+        product = self.density * self.cp
+        if not math.isfinite(product) or product <= 0:
+            raise ValueError(f"fluid density * cp must be a positive finite number, got {product!r}")
 
     @property
     def volumetric_heat_capacity(self) -> float:

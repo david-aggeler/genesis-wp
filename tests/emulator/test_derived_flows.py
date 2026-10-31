@@ -89,3 +89,19 @@ async def test_a_tiny_pump_speed_serves_a_bounded_inlet_temperature_not_a_wrappe
     assert condenser == pytest.approx(heating.MAX_RISE, abs=0.01)
     assert brine == pytest.approx(heating.MAX_RISE, abs=0.01)
     assert data["input_condenser_in_temperature"] < data["input_condenser_out_temperature"]
+
+
+# formal_review-12 B2: the served inlet never wraps the signed 16-bit register.
+@pytest.mark.parametrize(("outlet", "inlet", "low"), [
+    (heating.CONDENSER_OUT, "input_condenser_in_temperature", True),
+    (heating.BRINE_OUT, "input_brine_in_temperature", False),
+])
+async def test_an_extreme_outlet_serves_a_clamped_inlet_not_a_wrapped_one(start_emulator, outlet, inlet, low):
+    # Overrides are raw unsigned words: -320.00 °C is 0x10000 - 32000.
+    extreme = {("input_registers", outlet): 0x10000 - 32000 if low else 32000,
+               ("input_registers", heating.CONDENSER_PUMP): 50, ("input_registers", heating.BRINE_PUMP): 50}
+    emu = await start_emulator(PROFILE_615, dynamics=True, overrides=extreme)
+    data = await library_full_update(emu)
+    assert data["input_compressor_speed_rpm"] > 0 and data[HEAT] > 0
+    # Clamped at the range ends; the top is 327.66 because the library reads raw 32767 as 0.
+    assert data[inlet] == (-327.68 if low else 327.66)

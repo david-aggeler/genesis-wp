@@ -117,6 +117,9 @@ CONDENSER_FLOW_PER_PERCENT = 0.22  # [L/min per %]
 BRINE_FLOW_PER_PERCENT = 0.20  # [L/min per %]
 #: Largest loop temperature difference the model serves [K]; an emulator bound, not a plant value.
 MAX_RISE = 20.0
+# Signed 16-bit range a served value is clamped to. The top is 0x7FFE, not 0x7FFF: the library's
+# upstream signed decoding reads 32767 as 0.
+INT16_MIN, INT16_MAX = -0x8000, 0x7FFE
 
 #: One model step is one simulated minute; the lags below are rates per simulated minute, so a
 #: simulated clock runs whole steps and the plant response does not depend on playback speed
@@ -153,6 +156,14 @@ def _rise(heat: float, fluid: Fluid, flow: float) -> float:
         _LOGGER.debug("loop temperature difference %.2f K at %.3f L/min bounded at %.1f K", rise, flow, MAX_RISE)
         return MAX_RISE
     return rise
+
+
+def _int16(address: int, value: int) -> int:
+    """``value`` clamped to the signed 16-bit register range, so a served value never wraps its sign."""
+    clamped = min(max(value, INT16_MIN), INT16_MAX)
+    if clamped != value:
+        _LOGGER.debug("input %d raw %d clamped to %d (signed 16-bit range)", address, value, clamped)
+    return clamped
 
 
 def _signed(raw: int) -> int:
@@ -366,7 +377,7 @@ class HeatingModel:
             CONDENSER_IN: self.condenser_in,
             BRINE_IN: self.brine_in,
         }
-        raw = {a: round(v * SCALE) & 0xFFFF for a, v in values.items() if a not in self.not_fitted}
+        raw = {a: _int16(a, round(v * SCALE)) & 0xFFFF for a, v in values.items() if a not in self.not_fitted}
         raw[DEMAND] = DEMAND_PASSIVE_COOLING if self.cooling else self.demand_raw
         return raw
 
