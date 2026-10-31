@@ -3,6 +3,7 @@ Python wrapper for getting data from Thermie Genesis heatpump using Modbus TCP
 """
 
 import logging
+import math
 
 import datetime
 import asyncio
@@ -55,6 +56,10 @@ class GenesisNotWritableError(ThermiaException):
     """A write was attempted on an input or discrete-input register (requirement-30)."""
 
 
+class GenesisInvalidWriteError(ThermiaException):
+    """A write named an unknown or model-undefined register, or a value it cannot carry exactly (requirement-33)."""
+
+
 @dataclass(frozen=True)
 class EnumValue:
     """An enumerated register's value: the raw value and its documented label.
@@ -74,6 +79,44 @@ def num_to_bin(value):
     if value > -1:
         return value
     return 65536 + value
+
+
+# Word range an FC6 write may carry, by holding datatype; any other datatype is not writable.
+_WORD_RANGES = {TYPE_INT: (-32768, 32767), TYPE_UINT: (0, 65535)}
+
+# Largest distance of value * scale from an integer still treated as exact (0.29 * 100 = 28.999999999999996).
+_SCALE_TOLERANCE = 1e-6
+
+
+# DHF-REQ: genesis-wp/requirement-33
+def _coil_payload(register, value) -> bool:
+    """The FC5 bit for a coil write: only 0, 1, True or False, never a truthy coercion."""
+    if not isinstance(value, int) or value not in (0, 1):
+        raise GenesisInvalidWriteError(f"refusing to write {register}: coil value {value!r} is not 0, 1, True or False")
+    return bool(value)
+
+
+# DHF-REQ: genesis-wp/requirement-33
+def _holding_payload(register, meta, value) -> int:
+    """The FC6 word for a holding write: the rounded scaled value, refused unless exact and in range."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise GenesisInvalidWriteError(f"refusing to write {register}: {value!r} is not a number")
+    scaled = value * meta[KEY_SCALE]
+    if isinstance(scaled, float) and not math.isfinite(scaled):
+        raise GenesisInvalidWriteError(f"refusing to write {register}: {value!r} scales to a non-finite value")
+    word = round(scaled)
+    if abs(scaled - word) > _SCALE_TOLERANCE:
+        raise GenesisInvalidWriteError(
+            f"refusing to write {register}: {value!r} is not exact at scale 1/{meta[KEY_SCALE]}"
+        )
+    if meta[KEY_DATATYPE] not in _WORD_RANGES:
+        raise GenesisInvalidWriteError(f"refusing to write {register}: datatype {meta[KEY_DATATYPE]} is not a 16-bit word")
+    low, high = _WORD_RANGES[meta[KEY_DATATYPE]]
+    if not low <= word <= high:
+        raise GenesisInvalidWriteError(
+            f"refusing to write {register}: {value!r} scales to {word}, outside {low}..{high} for {meta[KEY_DATATYPE]}"
+        )
+    return num_to_bin(word)
 
 
 def words_to_long(words, big_endian=True):
@@ -341,19 +384,26 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             raise GenesisReadOnlyError(
                 f"refusing to write {register}: client is read-only (construct with read_only=False to allow writes)"
             )
-        meta = REGISTERS[register]
+        meta = REGISTERS.get(register) if isinstance(register, str) else None
+        if meta is None or not meta[self._kind]:
+            # An unknown name, or an address this model does not document (requirement-33).
+            raise GenesisInvalidWriteError(f"refusing to write {register!r}: not a register of model {self._kind}")
         # The register type alone decides writability (requirement-30).
         if meta[KEY_REG_TYPE] not in (REG_COIL, REG_HOLDING):
             raise GenesisNotWritableError(
                 f"refusing to write {register}: a {meta[KEY_REG_TYPE]} register is not writable"
             )
+        if meta[KEY_REG_TYPE] == REG_COIL:
+            payload = _coil_payload(register, value)
+        else:
+            payload = _holding_payload(register, meta, value)
 
         unit = await self._ensure_unit()
 
         await asyncio.sleep(self._delay)
         failure = None
         try:
-            await self._write(unit, meta, value)
+            await self._write(unit, meta, value, payload)
         # ModbusError is the base of every modbus-connection error: exception reply, lost link,
         # timeout, protocol error and desync all map to one host-free error (requirement-30).
         except (ModbusError, OSError) as err:
@@ -371,18 +421,14 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         return value
 
     @staticmethod
-    async def _write(unit, meta, value) -> None:
-        """Send one coil (FC5) or holding (FC6) write; the caller has checked the type."""
+    async def _write(unit, meta, value, payload) -> None:
+        """Send one coil (FC5) or holding (FC6) write of a payload the caller has validated."""
         regtype, address, scale = meta[KEY_REG_TYPE], meta[KEY_ADDRESS], meta[KEY_SCALE]
+        _LOGGER.debug(f"Set {regtype} register at {address} value {payload} ({value}) {scale}")
         if regtype == REG_COIL:
-            _LOGGER.debug(f"Set {regtype} register at {address} value {value} ({value})")
-            await unit.write_coil(address, bool(value))
+            await unit.write_coil(address, payload)
             return
-        converted_value = int(value * scale)
-        if meta[KEY_DATATYPE] == TYPE_INT:
-            converted_value = num_to_bin(converted_value)
-        _LOGGER.debug(f"Set {regtype} register at {address} value {converted_value} ({value}) {scale}")
-        await unit.write_register(address, converted_value)
+        await unit.write_register(address, payload)
 
     async def _get_data(self, registers):
         """Retrieve data from heat pump."""
