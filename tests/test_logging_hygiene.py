@@ -132,7 +132,8 @@ async def test_unexpected_write_error_is_logged_not_printed(start_emulator, debu
             raise RuntimeError("unexpected")
 
         monkeypatch.setattr(unit, "write_register", broken)
-        await client.async_set(ATTR_HOLDING_COMFORT_WHEEL_SETTING, 21)
+        with pytest.raises(RuntimeError):  # logged, then raised: never reported as written (requirement-30)
+            await client.async_set(ATTR_HOLDING_COMFORT_WHEEL_SETTING, 21)
     finally:
         await client.close()
     assert emu.writes == []
