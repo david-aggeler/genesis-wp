@@ -551,6 +551,17 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         scale = info[KEY_SCALE]
         if scale != 1:
             val = val / scale
+            if info.get(KEY_KIND, {}).get(self._kind) == KIND_COUNT:
+                val = self._count_value(name, val)
+        return val
+
+    # DHF-REQ: genesis-wp/requirement-35
+    @staticmethod
+    def _count_value(name, val):
+        """A scaled count is an int when integral; otherwise the exact float stays, logged."""
+        if val.is_integer():
+            return int(val)
+        _LOGGER.debug("Count register %s decoded to non-integral %s; kept as float", name, val)
         return val
 
     def _decode_status(self, name, info, val):
