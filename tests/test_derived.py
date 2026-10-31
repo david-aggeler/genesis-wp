@@ -86,6 +86,20 @@ def test_resting_compressor_reports_flow_from_pump_speed_once_calibrated():
         assert estimate.value is None and estimate.source == "unknown" and estimate.calibration is None
 
 
+# DHF-REQ: genesis-wp/requirement-31  DHF-TEST: genesis-wp/ac-135
+def test_varying_inputs_yield_the_ratio_of_window_sums_not_a_mean_of_per_sample_ratios():
+    high, low = {**condenser_delta(2.0), HEAT: 2.0}, {**condenser_delta(4.0), HEAT: 1.0}
+    estimator = FlowEstimator(CONDENSER)
+    for i in range(13):  # every 30 s through 360 s, alternating
+        estimate = estimator.add(30 * i, high if i % 2 == 0 else low)
+    ratio_of_sums = 60 * (2.0 + 1.0) / (1.00 * 4.18 * (2.0 + 4.0))  # equal halves of the window
+    mean_of_ratios = (60 * 2.0 / (4.18 * 2.0) + 60 * 1.0 / (4.18 * 4.0)) / 2
+    assert ratio_of_sums == pytest.approx(7.2, abs=0.05) and mean_of_ratios == pytest.approx(9.0, abs=0.05)
+    assert estimate.source == "calculated"
+    assert estimate.value == pytest.approx(ratio_of_sums, rel=0.01)
+    assert abs(estimate.value - mean_of_ratios) > 0.10 * mean_of_ratios
+
+
 # DHF-REQ: genesis-wp/requirement-31  DHF-TEST: genesis-wp/ac-122
 def test_fluid_defaults_cite_their_source_and_can_be_overridden():
     assert (WATER.cp, WATER.density) == (4.18, 1.00)
