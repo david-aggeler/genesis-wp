@@ -56,3 +56,92 @@ THERMIA_GENESIS_17_1 = {
         304, 321
     }),
 }
+
+# Unit column per block, as {source unit: addresses} (requirement-27). The source unit is kept verbatim
+# (None where the source states none); tests/test_registers.py maps it onto the declared unit.
+# Stiebel: every documented address. Thermia: the addresses the WPE-I declares platform_doc, each row
+# checked against the address list (the text extraction of the other rows is not reviewed).
+STIEBEL_WPE_I_071_UNITS = {
+    "coil": {
+        None: frozenset({
+            3, 5, 7, 8, 9, 10, 11, 16, 17, 20, 21, 22, 28, 31, 33, 34, 35, 37, 39, 41, 42, 43, 46,
+            59
+        }),
+    },
+    "dinput": {
+        None: frozenset({
+            0, 1, 2, 3, 9, 10, 12, 14, 15, 16, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34,
+            35, 36, 37, 38, 46, 47, 48, 49, 50, 56, 57, 60, 61, 62, 66, 67, 68, 70, 74, 75, 76, 77,
+            83, 84, 85, 87, 201, 202, 204, 210, 218, 219, 221, 247, 248, 249, 250, 251, 252, 253,
+            254
+        }),
+    },
+    "input": {
+        None: frozenset({
+            1, 2, 4, 30, 36, 61, 67, 131, 143, 145, 160, 161, 162, 163, 311, 312, 313, 413
+        }),
+        "%": frozenset({6, 39, 43, 44, 54, 315}),
+        "K": frozenset({125, 126}),
+        "bar": frozenset({127, 128}),
+        "h": frozenset({48, 49, 50, 51, 52, 53}),
+        "rpm": frozenset({5}),
+        "°C": frozenset({
+            8, 9, 10, 11, 12, 13, 15, 16, 17, 18, 19, 40, 41, 68, 99, 100, 104, 106, 119, 120, 121,
+            129, 130, 147, 148, 149, 319
+        }),
+    },
+    "holding": {
+        None: frozenset({78, 85, 86, 87, 88, 117, 124, 298, 305, 309}),
+        "%": frozenset({76, 77, 79, 80, 81, 82}),
+        "K": frozenset({5, 70, 300}),
+        "kW": frozenset({125}),
+        "s": frozenset({61, 62}),
+        "°C": frozenset({
+            3, 4, 6, 7, 8, 9, 10, 11, 12, 16, 22, 23, 58, 67, 68, 69, 105, 106, 107, 108, 109, 110,
+            111, 112, 113, 114, 115, 116, 118, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208,
+            209, 210, 211, 212, 213, 214, 215, 216, 299, 302, 303, 304, 306, 307, 308, 310, 311, 312
+        }),
+    },
+}
+
+THERMIA_GENESIS_17_1_UNITS = {
+    "coil": {
+        "on/off": frozenset({6, 14, 25, 26, 38, 40}),
+    },
+    "dinput": {
+        "active/inactive": frozenset({11, 13, 52, 55}),
+        "on/off": frozenset({
+            78, 79, 86, 199, 206, 209, 211, 220, 223, 224, 225, 235, 236, 238, 240, 242, 245, 246
+        }),
+    },
+    "input": {
+        None: frozenset({60, 83, 139, 140, 141, 142, 146}),
+        "%": frozenset({47, 137}),
+        "A": frozenset({69, 70, 71}),
+        "V": frozenset({72, 73, 74, 75, 76, 77}),
+        "W": frozenset({78, 79, 80}),
+        "enum": frozenset({55, 56, 62, 63, 64, 65, 66, 82}),
+        "kW": frozenset({157, 158}),
+        "kWh": frozenset({81}),
+        "°C": frozenset({7, 20, 21, 22, 23, 24, 25, 26, 45, 122, 124}),
+    },
+    "holding": {
+        None: frozenset({26, 27, 28, 29, 75}),
+        "%": frozenset({30, 49, 50}),
+        "A": frozenset({119, 120}),
+        "enum": frozenset({0, 321}),
+        "min": frozenset({63}),
+    },
+}
+
+# Source corrections (requirement-27, ac-106): (block, address) -> the source unit overridden, the
+# declared unit and the evidence. Each needs an owner decision.
+UNIT_CORRECTIONS = {
+    ("holding", 63): {
+        "source_unit": "min",
+        "unit": "s",
+        "evidence": "Stiebel gives s for the sibling gear shift delays holding 61 and 62; probes of"
+                    " 6.0.6 and 6.1.5 read 300, 300, 60 for holdings 61-63 (owner decision 2026-10-31,"
+                    " action_item-1)",
+    },
+}
