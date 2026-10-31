@@ -141,36 +141,56 @@ def hostile_samples() -> list[dict]:
     return samples
 
 
-def assert_bounded(estimator: FlowEstimator, timeline) -> int:
-    count = 0
+SOURCES = {"calculated", "pump_speed", "unknown"}
+WINDOW_RUN = 11  # STEADY samples 30 s apart: 300 s, one full default window of running
+
+
+def assert_bounded(estimator: FlowEstimator, timeline) -> set[str]:
+    """Feed ``timeline``, check every estimate is None or a finite float in 0 … MAXIMUM; returns the sources."""
+    sources = set()
     for timestamp, data in timeline:
         estimate = estimator.add(timestamp, data)
-        count += 1
-        assert estimate.source in ("calculated", "pump_speed", "unknown")
+        sources.add(estimate.source)
+        assert estimate.source in SOURCES
         if estimate.value is None:
             assert estimate.source == "unknown"
         else:
             assert type(estimate.value) is float and math.isfinite(estimate.value)
             assert 0.0 <= estimate.value <= MAXIMUM
-    return count
+    return sources
+
+
+def steady_run(start: float) -> list[tuple[float, dict]]:
+    return [(start + 30.0 * i, STEADY) for i in range(WINDOW_RUN)]
 
 
 def fixed_timeline() -> list[tuple[float, dict]]:
-    timeline = [(30.0 * i, STEADY) for i in range(12)]  # calibrate first, so the fallback is exercised
-    t = timeline[-1][0]
+    """Each hostile sample arrives inside a full window of running samples and is followed by another."""
+    timeline = []
     for data in hostile_samples():
-        t += 30.0
-        timeline += [(t, data), (t, STEADY), (t - 60.0, STEADY)]  # repeated and earlier timestamp
-    timeline += [(math.nan, STEADY), (math.inf, STEADY), (None, STEADY), ("later", STEADY)]
-    timeline += [(t + 30.0, None), (t + 60.0, "not a dict"), (t + 90.0, {})]
+        timeline += steady_run(len(timeline) * 30.0)
+        timeline.append((len(timeline) * 30.0, data))
+    timeline += steady_run(len(timeline) * 30.0)
     return timeline
 
 
+def clock_timeline(start: float) -> list[tuple[float, dict]]:
+    """Clock steps and malformed updates, kept apart from the hostile samples."""
+    t = start
+    return [(t, STEADY), (t - 60.0, STEADY), (math.nan, STEADY), (math.inf, STEADY), (None, STEADY),
+            ("later", STEADY), (t + 30.0, None), (t + 60.0, "not a dict"), (t + 90.0, {})]
+
+
 def random_timeline(seed: int, length: int = 1500) -> list[tuple[float, dict]]:
+    """Seeded mix of hostile samples, clock steps and full running windows, at least ``length`` samples."""
     rng = random.Random(seed)
-    pool = hostile_samples() + [STEADY] * 10 + [condenser_delta(2.1)] * 5
+    pool = hostile_samples() + [condenser_delta(2.1)] * 5
     t, timeline = 0.0, []
-    for _ in range(length):
+    while len(timeline) < length:
+        if rng.random() < 0.1:  # a full window of running, so hostile samples land inside one
+            timeline += steady_run(t + 30.0)
+            t = timeline[-1][0]
+            continue
         t += rng.choice((30.0, 30.0, 30.0, 0.0, -30.0, 1e-9, 600.0))
         timeline.append((t, rng.choice(pool)))
     return timeline
@@ -179,9 +199,13 @@ def random_timeline(seed: int, length: int = 1500) -> list[tuple[float, dict]]:
 # DHF-REQ: genesis-wp/requirement-31  DHF-TEST: genesis-wp/ac-118
 @pytest.mark.parametrize("loop", [CONDENSER, BRINE], ids=lambda loop: loop.name)
 def test_no_input_sequence_makes_the_estimate_non_finite_negative_or_above_the_maximum(loop):
-    assert assert_bounded(FlowEstimator(loop, max_flow=MAXIMUM), fixed_timeline()) > 60
+    estimator, fixed = FlowEstimator(loop, max_flow=MAXIMUM), fixed_timeline()
+    assert assert_bounded(estimator, fixed) == SOURCES
+    assert_bounded(estimator, clock_timeline(fixed[-1][0]))
     for seed in (1, 2, 3):
-        assert assert_bounded(FlowEstimator(loop, max_flow=MAXIMUM), random_timeline(seed)) >= 1000
+        timeline = random_timeline(seed)
+        assert len(timeline) >= 1000
+        assert assert_bounded(FlowEstimator(loop, max_flow=MAXIMUM), timeline) == SOURCES
 
 
 def test_flow_above_the_maximum_is_rejected_not_clamped():
