@@ -20,3 +20,7 @@ transition_gates:
   unit: {"in_session": [["python", "-m", "compileall", "-q", "genesis_wp", "scripts", "tests"], ["python", "-m", "pytest"]], "runner_owned": [["python", "scripts/check_complexity.py"]]}
   integration: {"in_session": [["python", "-m", "compileall", "-q", "genesis_wp", "scripts", "tests"], ["python", "-m", "pytest"]], "runner_owned": [["python", "scripts/check_complexity.py"], ["python", "scripts/check_coverage.py"]]}
   system: {"in_session": [["python", "-m", "compileall", "-q", "genesis_wp", "scripts", "tests"], ["python", "-m", "pytest"]], "runner_owned": [["python", "scripts/check_complexity.py"], ["python", "scripts/check_coverage.py"]]}
+
+# Argv that openbrain-client merge runs from the primary checkout on main; the client appends
+# the commit SHA it resolved from branch-or-ref (requirement-34). One line of JSON flow style.
+merge_command: ["bash", "scripts/merge_unit.sh"]
