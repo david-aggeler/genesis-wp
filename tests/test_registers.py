@@ -260,3 +260,37 @@ def test_reported_wpe_i_registers_carry_the_labels_of_their_source_rows():
         assert meta.get(KEY_NAME, {}).get(model) == fact["name"], key
         assert meta.get(KEY_NAME_DE, {}).get(model) == fact["name_de"], key
 
+
+# DHF-REQ: genesis-wp/requirement-28  DHF-TEST: genesis-wp/ac-128
+def test_every_wpe_i_display_name_has_a_label_fact():
+    from genesis_wp.const import KEY_ADDRESS, KEY_NAME, KEY_NAME_DE, KEY_REG_TYPE
+
+    from .register_sources import WPE_I_071_LABELS
+
+    model = MODEL_STIEBEL_WPE_I_071
+    named = {
+        (meta[KEY_REG_TYPE], meta[KEY_ADDRESS])
+        for meta in _wpe_i_registers().values()
+        if model in meta.get(KEY_NAME, {}) or model in meta.get(KEY_NAME_DE, {})
+    }
+    assert named, "no WPE-I register declares a display name"
+    assert not named - set(WPE_I_071_LABELS), sorted(named - set(WPE_I_071_LABELS))
+
+
+# DHF-REQ: genesis-wp/requirement-28  DHF-TEST: genesis-wp/ac-130
+def test_german_row_text_sits_only_on_stiebel_sources():
+    from genesis_wp.const import KEY_ADDRESS, KEY_NAME_DE, KEY_REG_TYPE, KEY_SOURCE, SOURCE_MODEL_DOC
+
+    from .register_sources import STIEBEL, WPE_I_071_LABELS
+
+    model = MODEL_STIEBEL_WPE_I_071
+    for meta in REGISTERS.values():
+        if model in meta.get(KEY_NAME_DE, {}):
+            key = (meta[KEY_REG_TYPE], meta[KEY_ADDRESS])
+            assert meta.get(KEY_SOURCE, {}).get(model) == SOURCE_MODEL_DOC, key
+    for key, fact in WPE_I_071_LABELS.items():
+        if fact["source"].startswith(STIEBEL):
+            assert isinstance(fact["name_de"], str) and fact["name_de"].strip(), key
+        else:
+            assert fact["name_de"] is None, key
+
