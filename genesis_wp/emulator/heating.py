@@ -32,17 +32,30 @@ cooling season start (holding 303), HC2 cools. Its target (input 147) is then ho
 follows it, input 1 reports 8 (passive cooling) and discrete input 245
 is on. Modeled from the Stiebel document, not yet observed on the plant.
 
+Inlet temperatures (requirement-31): the model serves condenser in (input 8) and brine in
+(input 10) from the outlets, the heat and a configured flow of flow-per-percent x pump speed
+(input 39, input 44), with the fluids of ``genesis_wp.derived``: condenser in = input 9 -
+60 x heat output / (rho cp flow), brine in = input 11 + 60 x (heat output - electric power) /
+(rho cp flow). Stopped compressor or pump: inlet equals outlet. The temperature difference is
+bounded at ``MAX_RISE``, so a tiny pump speed with the compressor running serves a bounded
+inlet temperature, never a value that wraps the 16-bit register. The defaults are rounded from
+the read-only read 2026-10-29 (7.6 L/min at 35 %, 9.7 L/min at 48 %).
+
 A sensor the served profile has as not fitted (a capability switched off) is left alone: the
 model does not serve it (issue-12).
 """
 
 from __future__ import annotations
 
+import logging
 import random
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
+from ..derived import BRINE_MEG25, WATER, Fluid
 from .profile import RoomSetPointRule
+
+_LOGGER = logging.getLogger(__name__)
 
 # Outdoor temperatures [°C] of the seven curve points, as the controller defines them.
 CURVE_X = (17.0, 10.0, 5.0, 0.0, -5.0, -15.0, -25.0)
@@ -76,15 +89,19 @@ T31 = 41
 SET_POINT_HC2 = 147
 HEAT_OUTPUT = 157  # kW at scale 100
 ELECTRIC_POWER = 158  # kW at scale 100
+CONDENSER_IN = 8
+BRINE_IN = 10
 #: Inputs the model serves.
-INPUTS = (OUTDOOR, T33, SET_POINT_HC1, T32, T31, SET_POINT_HC2, DEMAND, HEAT_OUTPUT, ELECTRIC_POWER)
+INPUTS = (OUTDOOR, T33, SET_POINT_HC1, T32, T31, SET_POINT_HC2, DEMAND, HEAT_OUTPUT, ELECTRIC_POWER,
+          CONDENSER_IN, BRINE_IN)
 
 # Compressor inputs the model reads; the emulator's drift (or the profile) owns them.
 SPEED = 5  # rpm at scale 1
 CONDENSER_OUT = 9
 BRINE_OUT = 11
 CONDENSER_PUMP = 39  # % at scale 100
-COMPRESSOR = (SPEED, CONDENSER_OUT, BRINE_OUT, CONDENSER_PUMP)
+BRINE_PUMP = 44  # % at scale 100
+COMPRESSOR = (SPEED, CONDENSER_OUT, BRINE_OUT, CONDENSER_PUMP, BRINE_PUMP)
 
 SCALE = 100  # °C, % or kW at scale 100 (not input 5)
 
@@ -94,6 +111,15 @@ HEAT_OFFSET = 0.007  # [kW]
 COP_AT_REFERENCE = 5.44  # at the reference lift
 COP_PER_K = 0.160  # COP lost per K of lift
 REFERENCE_LIFT = 29.8  # [K]
+
+# Loop flow per pump speed, read-only read 2026-10-29 (requirement-31).
+CONDENSER_FLOW_PER_PERCENT = 0.22  # [L/min per %]
+BRINE_FLOW_PER_PERCENT = 0.20  # [L/min per %]
+#: Largest loop temperature difference the model serves [K]; an emulator bound, not a plant value.
+MAX_RISE = 20.0
+# Signed 16-bit range a served value is clamped to. The top is 0x7FFE, not 0x7FFF: the library's
+# upstream signed decoding reads 32767 as 0.
+INT16_MIN, INT16_MAX = -0x8000, 0x7FFE
 
 #: One model step is one simulated minute; the lags below are rates per simulated minute, so a
 #: simulated clock runs whole steps and the plant response does not depend on playback speed
@@ -116,6 +142,28 @@ def interpolate(points: tuple[float, ...], outdoor: float) -> float:
         if x1 <= outdoor <= x0:
             return points[i] + (points[i + 1] - points[i]) * (x0 - outdoor) / (x0 - x1)
     raise AssertionError("unreachable")  # pragma: no cover
+
+
+def _rise(heat: float, fluid: Fluid, flow: float) -> float:
+    """Temperature difference [K] of ``heat`` [kW] across a loop of ``flow`` [L/min]; 0 without heat or flow.
+
+    Bounded at ``MAX_RISE``.
+    """
+    if heat <= 0 or flow <= 0:
+        return 0.0
+    rise = 60.0 * heat / (fluid.volumetric_heat_capacity * flow)
+    if rise > MAX_RISE:
+        _LOGGER.debug("loop temperature difference %.2f K at %.3f L/min bounded at %.1f K", rise, flow, MAX_RISE)
+        return MAX_RISE
+    return rise
+
+
+def _int16(address: int, value: int) -> int:
+    """``value`` clamped to the signed 16-bit register range, so a served value never wraps its sign."""
+    clamped = min(max(value, INT16_MIN), INT16_MAX)
+    if clamped != value:
+        _LOGGER.debug("input %d raw %d clamped to %d (signed 16-bit range)", address, value, clamped)
+    return clamped
 
 
 def _signed(raw: int) -> int:
@@ -155,6 +203,12 @@ class HeatingModel:
     condenser_out: float = 0.0
     brine_out: float = 0.0
     condenser_pump: float = 0.0
+    brine_pump: float = 0.0
+    #: Configured loop flows [L/min per % pump speed] and their fluids, for the inlet temperatures.
+    condenser_flow_per_percent: float = CONDENSER_FLOW_PER_PERCENT
+    brine_flow_per_percent: float = BRINE_FLOW_PER_PERCENT
+    condenser_fluid: Fluid = WATER
+    brine_fluid: Fluid = BRINE_MEG25
     #: Room set points by circuit, for the circuits the profile has rules for.
     room_set_points: dict[str, RoomSetPoint] = field(default_factory=dict)
     _start_outdoor: float = field(init=False)
@@ -194,6 +248,7 @@ class HeatingModel:
             condenser_out=value(input_raw, CONDENSER_OUT),
             brine_out=value(input_raw, BRINE_OUT),
             condenser_pump=value(input_raw, CONDENSER_PUMP),
+            brine_pump=value(input_raw, BRINE_PUMP),
         )
 
     def observe(self, raw: dict[int, int]) -> None:
@@ -201,7 +256,7 @@ class HeatingModel:
         if SPEED in raw:
             self.speed = raw[SPEED]
         for address, attribute in ((CONDENSER_OUT, "condenser_out"), (BRINE_OUT, "brine_out"),
-                                   (CONDENSER_PUMP, "condenser_pump")):
+                                   (CONDENSER_PUMP, "condenser_pump"), (BRINE_PUMP, "brine_pump")):
             if address in raw:
                 setattr(self, attribute, raw[address] / SCALE)
 
@@ -222,6 +277,18 @@ class HeatingModel:
             return 0.0
         lift = self.condenser_out - self.brine_out
         return self.heat_output / (COP_AT_REFERENCE - COP_PER_K * (lift - REFERENCE_LIFT))
+
+    @property
+    def condenser_in(self) -> float:
+        """[°C] condenser out less the temperature rise the heat output gives the configured flow"""
+        rise = _rise(self.heat_output, self.condenser_fluid, self.condenser_flow_per_percent * self.condenser_pump)
+        return self.condenser_out - rise
+
+    @property
+    def brine_in(self) -> float:
+        """[°C] brine out plus the temperature drop the heat taken from the ground gives the configured flow"""
+        heat = self.heat_output - self.electric_power if self.heat_output > 0 else 0.0
+        return self.brine_out + _rise(heat, self.brine_fluid, self.brine_flow_per_percent * self.brine_pump)
 
     @property
     def set_point_hc1(self) -> float:
@@ -307,8 +374,10 @@ class HeatingModel:
             SET_POINT_HC2: self.set_point_hc2,
             HEAT_OUTPUT: self.heat_output,
             ELECTRIC_POWER: self.electric_power,
+            CONDENSER_IN: self.condenser_in,
+            BRINE_IN: self.brine_in,
         }
-        raw = {a: round(v * SCALE) & 0xFFFF for a, v in values.items() if a not in self.not_fitted}
+        raw = {a: _int16(a, round(v * SCALE)) & 0xFFFF for a, v in values.items() if a not in self.not_fitted}
         raw[DEMAND] = DEMAND_PASSIVE_COOLING if self.cooling else self.demand_raw
         return raw
 

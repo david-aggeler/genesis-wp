@@ -38,6 +38,20 @@ The controller has no "installed modules" register. After each update, `client.c
 
 The demand registers (inputs 1, 55, 56, 62-66) decode to strings such as `Heat` or `No demand`. On the Genesis 17 models (WPE-I, Calibra RXT) they follow the documents' value table, including `Passive cooling` (8) and `OFF` (100), and carry a `client.labels` entry; an undocumented value is reported as its raw number. Legacy models keep the upstream decoding.
 
+### Derived flows
+
+No register reports a flow. `genesis_wp.derived` estimates the condenser loop and the brine loop from update dicts by an energy balance over a sliding window: flow [L/min] = 60 × Σ P·dt / (ρ · cp · Σ ΔT·dt). The condenser loop uses heat output (input 157) over condenser out − in with water (cp 4.18 kJ/(kg·K), ρ 1.00 kg/L); the brine loop uses heat output − electric power (input 158) over brine in − out with 25 % ethylene glycol (cp 3.80, ρ 1.04, per the WPE-I installation manual section 7.7.3). The estimator does no Modbus I/O; you feed it and keep it:
+
+```python
+from genesis_wp.derived import BRINE, CONDENSER, FlowEstimator
+
+condenser = FlowEstimator(CONDENSER)  # fluid=, window_s=300, min_delta_t=2.0, max_flow=60.0, max_gap_s=120
+estimate = condenser.add(time.monotonic(), await thermia.async_update())
+estimate.value, estimate.source  # L/min or None; "calculated", "pump_speed" or "unknown"
+```
+
+Use a monotonic clock: a timestamp earlier than the previous one restarts the window, a repeated one is dropped. A value is `calculated` once the window covers `window_s` of uninterrupted running with a mean ΔT of at least `min_delta_t`. Uninterrupted means every sample has the compressor running, a loop heat above 0 and a ΔT above 0, with no more than `max_gap_s` between samples; anything else restarts the window. Each window calibrates a flow per pump percent (the window's flow over its mean pump speed); without one, a calibrated estimator reports factor × pump speed (`pump_speed`), otherwise `None` (`unknown`). A value that is not finite or lies outside 0 … `max_flow` is never reported, and bad data never raises. Assumptions: the brine fill is not documented, so its fluid is a parameter; input 157 is probably computed by the controller from its own flow sensor, so the condenser estimate largely mirrors that sensor. The room loop (heating circuit 2) and the flow to the buffer cannot be derived: there is no room return sensor. With dynamics on, the emulator serves the inlet temperatures (inputs 8 and 10) from a configured flow per pump percent (`heating.CONDENSER_FLOW_PER_PERCENT`, `heating.BRINE_FLOW_PER_PERCENT`).
+
 ### Read-only by default
 
 A client refuses every write (`async_set`) with `GenesisReadOnlyError` before anything is sent to the heat pump. To write, construct it with `read_only=False`; the setting cannot be changed afterwards. Writes go straight to the controller of a real heating plant without any bounds check yet, so only opt in when you mean it.
