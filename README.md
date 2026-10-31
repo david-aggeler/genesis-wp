@@ -22,7 +22,7 @@ Every register the WPE-I model reads declares where it comes from, per model (`K
 
 Every register the WPE-I model reads also declares, per model, the unit of its scaled value (`KEY_UNIT`: one of `UNITS`, `°C`, `K`, `bar`, `%`, `W`, `kW`, `kWh`, `A`, `V`, `h`, `s`, `rpm`, or `None`) and its value kind (`KEY_KIND`: one of `KINDS`, such as `temperature`, `pressure`, `percent`, `power`, `energy`, `count` or `state`). The unit is the one its declared source gives for the address; `None` means the source states no physical unit, and is never a guess. A bit, a status word or an enumerated register is a `state`; other unitless registers are a `count` or a `state`. A consumer such as a Home Assistant integration maps unit and kind mechanically instead of keeping its own unit table. The single source correction is holding 63 (gear shift delay cooling), declared `s` where Thermia's document says `min`.
 
-A register may also declare, per model, an English display name (`KEY_NAME`) translated from its source row, and for a Stiebel row the German row text (`KEY_NAME_DE`, `name_de`); the WPE-I declares them where the upstream identifier misleads, for example the `*mix_valve_1*` registers, which are heating circuit 2. The register identifiers stay unchanged.
+A register may also declare, per model, an English display name (`KEY_NAME`) translated from its source row, and for a Stiebel row the German row text (`KEY_NAME_DE`, `name_de`); the WPE-I declares them where the upstream identifier misleads, for example most of the `*mix_valve_1*` registers, which are heating circuit 2. The register identifiers stay unchanged.
 
 ### Groups and categories
 
