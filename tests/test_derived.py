@@ -228,9 +228,22 @@ def test_a_gap_between_running_samples_restarts_the_window():
     feed(short, STEADY, seconds=150)
     assert feed(short, STEADY, start=600, seconds=210).source == "unknown"  # only 210 s since the gap
     assert gap.calibration is None and short.calibration is None
-    tolerated = FlowEstimator(CONDENSER, max_gap_s=600)
-    tolerated.add(0, STEADY)
-    assert tolerated.add(600, STEADY).source == "calculated"
+    tolerated = FlowEstimator(CONDENSER, max_gap_s=200)
+    for t in (0, 150, 300):  # each gap within 200 s, but more than one interval per window
+        estimate = tolerated.add(t, STEADY)
+    assert estimate.source == "calculated"
+
+
+# DHF-REQ: genesis-wp/requirement-31  DHF-TEST: genesis-wp/ac-132
+@pytest.mark.parametrize("max_gap_s", [300, 600])
+def test_constructor_rejects_a_maximum_gap_not_shorter_than_the_window(max_gap_s):
+    with pytest.raises(ValueError, match="max_gap_s.*window_s"):
+        FlowEstimator(CONDENSER, window_s=300, max_gap_s=max_gap_s)
+
+
+def test_constructor_accepts_a_maximum_gap_shorter_than_the_window():
+    estimator = FlowEstimator(CONDENSER, window_s=300, max_gap_s=299)
+    assert (estimator.window_s, estimator.max_gap_s) == (300.0, 299.0)
 
 
 def test_a_running_sample_without_a_positive_temperature_difference_fails_closed():

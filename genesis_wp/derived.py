@@ -11,7 +11,7 @@ with a small ΔT cannot drive the result toward infinity. The window must cover
 ``window_s`` of uninterrupted compressor running and its mean ΔT must reach
 ``min_delta_t``; otherwise there is no calculated value. Uninterrupted means every sample
 is running with valid heat and a positive ΔT, and no two consecutive samples are more than
-``max_gap_s`` apart; anything else restarts the window. So does a timestamp earlier than the
+``max_gap_s`` apart (``max_gap_s`` < ``window_s``); anything else restarts the window. So does a timestamp earlier than the
 previous one (a clock step back); a repeated timestamp is dropped.
 
 Each window of ``window_s`` updates a calibration factor [L/min per %]: an exponential mean
@@ -172,6 +172,10 @@ class FlowEstimator:
         for name, value in limits:
             if _finite(value) is None or value <= 0:
                 raise ValueError(f"{name} must be a positive finite number, got {value!r}")
+        # A calculated value must rest on more than one interval of running samples.
+        if max_gap_s >= window_s:
+            raise ValueError(f"max_gap_s must be shorter than window_s, got max_gap_s={max_gap_s!r}, "
+                             f"window_s={window_s!r}")
         self.loop = loop
         self.fluid = fluid or loop.fluid
         self.window_s = float(window_s)
