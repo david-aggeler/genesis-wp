@@ -5,8 +5,10 @@ Hermetic: the estimators take update dicts and need no device and no emulator.
 
 from __future__ import annotations
 
+import logging
 import math
 import random
+import re
 
 import pytest
 
@@ -84,6 +86,20 @@ def test_resting_compressor_reports_flow_from_pump_speed_once_calibrated():
         assert estimate.value is None and estimate.source == "unknown" and estimate.calibration is None
 
 
+# DHF-REQ: genesis-wp/requirement-31  DHF-TEST: genesis-wp/ac-135
+def test_varying_inputs_yield_the_ratio_of_window_sums_not_a_mean_of_per_sample_ratios():
+    high, low = {**condenser_delta(2.0), HEAT: 2.0}, {**condenser_delta(4.0), HEAT: 1.0}
+    estimator = FlowEstimator(CONDENSER)
+    for i in range(13):  # every 30 s through 360 s, alternating
+        estimate = estimator.add(30 * i, high if i % 2 == 0 else low)
+    ratio_of_sums = 60 * (2.0 + 1.0) / (1.00 * 4.18 * (2.0 + 4.0))  # equal halves of the window
+    mean_of_ratios = (60 * 2.0 / (4.18 * 2.0) + 60 * 1.0 / (4.18 * 4.0)) / 2
+    assert ratio_of_sums == pytest.approx(7.2, abs=0.05) and mean_of_ratios == pytest.approx(9.0, abs=0.05)
+    assert estimate.source == "calculated"
+    assert estimate.value == pytest.approx(ratio_of_sums, rel=0.01)
+    assert abs(estimate.value - mean_of_ratios) > 0.10 * mean_of_ratios
+
+
 # DHF-REQ: genesis-wp/requirement-31  DHF-TEST: genesis-wp/ac-122
 def test_fluid_defaults_cite_their_source_and_can_be_overridden():
     assert (WATER.cp, WATER.density) == (4.18, 1.00)
@@ -125,36 +141,56 @@ def hostile_samples() -> list[dict]:
     return samples
 
 
-def assert_bounded(estimator: FlowEstimator, timeline) -> int:
-    count = 0
+SOURCES = {"calculated", "pump_speed", "unknown"}
+WINDOW_RUN = 11  # STEADY samples 30 s apart: 300 s, one full default window of running
+
+
+def assert_bounded(estimator: FlowEstimator, timeline) -> set[str]:
+    """Feed ``timeline``, check every estimate is None or a finite float in 0 … MAXIMUM; returns the sources."""
+    sources = set()
     for timestamp, data in timeline:
         estimate = estimator.add(timestamp, data)
-        count += 1
-        assert estimate.source in ("calculated", "pump_speed", "unknown")
+        sources.add(estimate.source)
+        assert estimate.source in SOURCES
         if estimate.value is None:
             assert estimate.source == "unknown"
         else:
             assert type(estimate.value) is float and math.isfinite(estimate.value)
             assert 0.0 <= estimate.value <= MAXIMUM
-    return count
+    return sources
+
+
+def steady_run(start: float) -> list[tuple[float, dict]]:
+    return [(start + 30.0 * i, STEADY) for i in range(WINDOW_RUN)]
 
 
 def fixed_timeline() -> list[tuple[float, dict]]:
-    timeline = [(30.0 * i, STEADY) for i in range(12)]  # calibrate first, so the fallback is exercised
-    t = timeline[-1][0]
+    """Each hostile sample arrives inside a full window of running samples and is followed by another."""
+    timeline = []
     for data in hostile_samples():
-        t += 30.0
-        timeline += [(t, data), (t, STEADY), (t - 60.0, STEADY)]  # repeated and earlier timestamp
-    timeline += [(math.nan, STEADY), (math.inf, STEADY), (None, STEADY), ("later", STEADY)]
-    timeline += [(t + 30.0, None), (t + 60.0, "not a dict"), (t + 90.0, {})]
+        timeline += steady_run(len(timeline) * 30.0)
+        timeline.append((len(timeline) * 30.0, data))
+    timeline += steady_run(len(timeline) * 30.0)
     return timeline
 
 
+def clock_timeline(start: float) -> list[tuple[float, dict]]:
+    """Clock steps and malformed updates, kept apart from the hostile samples."""
+    t = start
+    return [(t, STEADY), (t - 60.0, STEADY), (math.nan, STEADY), (math.inf, STEADY), (None, STEADY),
+            ("later", STEADY), (t + 30.0, None), (t + 60.0, "not a dict"), (t + 90.0, {})]
+
+
 def random_timeline(seed: int, length: int = 1500) -> list[tuple[float, dict]]:
+    """Seeded mix of hostile samples, clock steps and full running windows, at least ``length`` samples."""
     rng = random.Random(seed)
-    pool = hostile_samples() + [STEADY] * 10 + [condenser_delta(2.1)] * 5
+    pool = hostile_samples() + [condenser_delta(2.1)] * 5
     t, timeline = 0.0, []
-    for _ in range(length):
+    while len(timeline) < length:
+        if rng.random() < 0.1:  # a full window of running, so hostile samples land inside one
+            timeline += steady_run(t + 30.0)
+            t = timeline[-1][0]
+            continue
         t += rng.choice((30.0, 30.0, 30.0, 0.0, -30.0, 1e-9, 600.0))
         timeline.append((t, rng.choice(pool)))
     return timeline
@@ -163,9 +199,13 @@ def random_timeline(seed: int, length: int = 1500) -> list[tuple[float, dict]]:
 # DHF-REQ: genesis-wp/requirement-31  DHF-TEST: genesis-wp/ac-118
 @pytest.mark.parametrize("loop", [CONDENSER, BRINE], ids=lambda loop: loop.name)
 def test_no_input_sequence_makes_the_estimate_non_finite_negative_or_above_the_maximum(loop):
-    assert assert_bounded(FlowEstimator(loop, max_flow=MAXIMUM), fixed_timeline()) > 60
+    estimator, fixed = FlowEstimator(loop, max_flow=MAXIMUM), fixed_timeline()
+    assert assert_bounded(estimator, fixed) == SOURCES
+    assert_bounded(estimator, clock_timeline(fixed[-1][0]))
     for seed in (1, 2, 3):
-        assert assert_bounded(FlowEstimator(loop, max_flow=MAXIMUM), random_timeline(seed)) >= 1000
+        timeline = random_timeline(seed)
+        assert len(timeline) >= 1000
+        assert assert_bounded(FlowEstimator(loop, max_flow=MAXIMUM), timeline) == SOURCES
 
 
 def test_flow_above_the_maximum_is_rejected_not_clamped():
@@ -228,9 +268,57 @@ def test_a_gap_between_running_samples_restarts_the_window():
     feed(short, STEADY, seconds=150)
     assert feed(short, STEADY, start=600, seconds=210).source == "unknown"  # only 210 s since the gap
     assert gap.calibration is None and short.calibration is None
-    tolerated = FlowEstimator(CONDENSER, max_gap_s=600)
-    tolerated.add(0, STEADY)
-    assert tolerated.add(600, STEADY).source == "calculated"
+    tolerated = FlowEstimator(CONDENSER, max_gap_s=200)
+    for t in (0, 150, 300):  # each gap within 200 s, but more than one interval per window
+        estimate = tolerated.add(t, STEADY)
+    assert estimate.source == "calculated"
+
+
+# DHF-REQ: genesis-wp/requirement-31  DHF-TEST: genesis-wp/ac-132
+@pytest.mark.parametrize("max_gap_s", [300, 600])
+def test_constructor_rejects_a_maximum_gap_not_shorter_than_the_window(max_gap_s):
+    with pytest.raises(ValueError, match="max_gap_s.*window_s"):
+        FlowEstimator(CONDENSER, window_s=300, max_gap_s=max_gap_s)
+
+
+def test_constructor_accepts_a_maximum_gap_shorter_than_the_window():
+    estimator = FlowEstimator(CONDENSER, window_s=300, max_gap_s=299)
+    assert (estimator.window_s, estimator.max_gap_s) == (300.0, 299.0)
+
+
+def skipped_factors(caplog) -> list[float]:
+    """Factors [L/min per %] named by debug records of a skipped calibration."""
+    factors = []
+    for record in caplog.records:
+        message = record.getMessage()
+        if record.levelno == logging.DEBUG and "calibration" in message and "skipped" in message:
+            factors += [float(number) for number in re.findall(r"factor (\d+(?:\.\d+)?)", message)]
+    return factors
+
+
+# DHF-REQ: genesis-wp/requirement-31  DHF-TEST: genesis-wp/ac-129
+def test_an_implausible_calibration_window_leaves_the_calibration_unchanged(caplog):
+    caplog.set_level(logging.DEBUG, logger="genesis_wp.derived")
+    low_pump = {**STEADY, CONDENSER_PUMP: 2.0}  # 7.6 L/min over 2 %: 3.8 L/min per %, × 100 % > 60 L/min
+    implausible = CONDENSER_STEADY / 2.0
+
+    first = FlowEstimator(CONDENSER)
+    assert feed(first, low_pump).source == "calculated"
+    assert first.calibration is None
+    assert any(factor == pytest.approx(implausible, rel=0.01) for factor in skipped_factors(caplog))
+    resting = first.add(400, {**STOPPED, CONDENSER_PUMP: 35.0})
+    assert resting.source == "unknown" and resting.value is None
+
+    caplog.clear()
+    second = FlowEstimator(CONDENSER)
+    feed(second, STEADY)  # a plausible window at 35 %
+    earlier = second.calibration
+    assert earlier == pytest.approx(CONDENSER_STEADY / 35, rel=1e-9)
+    assert feed(second, low_pump, start=390, seconds=330).source == "calculated"  # a full window at 2 %
+    assert second.calibration == earlier
+    assert any(factor == pytest.approx(implausible, rel=0.01) for factor in skipped_factors(caplog))
+    resting = second.add(750, {**STOPPED, CONDENSER_PUMP: 35.0})
+    assert resting.source == "pump_speed" and resting.value == pytest.approx(earlier * 35, rel=1e-9)
 
 
 def test_a_running_sample_without_a_positive_temperature_difference_fails_closed():

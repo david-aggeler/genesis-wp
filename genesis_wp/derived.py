@@ -11,7 +11,7 @@ with a small ΔT cannot drive the result toward infinity. The window must cover
 ``window_s`` of uninterrupted compressor running and its mean ΔT must reach
 ``min_delta_t``; otherwise there is no calculated value. Uninterrupted means every sample
 is running with valid heat and a positive ΔT, and no two consecutive samples are more than
-``max_gap_s`` apart; anything else restarts the window. So does a timestamp earlier than the
+``max_gap_s`` apart (``max_gap_s`` < ``window_s``); anything else restarts the window. So does a timestamp earlier than the
 previous one (a clock step back); a repeated timestamp is dropped.
 
 Each window of ``window_s`` updates a calibration factor [L/min per %]: an exponential mean
@@ -172,6 +172,10 @@ class FlowEstimator:
         for name, value in limits:
             if _finite(value) is None or value <= 0:
                 raise ValueError(f"{name} must be a positive finite number, got {value!r}")
+        # A calculated value must rest on more than one interval of running samples.
+        if max_gap_s >= window_s:
+            raise ValueError(f"max_gap_s must be shorter than window_s, got max_gap_s={max_gap_s!r}, "
+                             f"window_s={window_s!r}")
         self.loop = loop
         self.fluid = fluid or loop.fluid
         self.window_s = float(window_s)
@@ -297,6 +301,11 @@ class FlowEstimator:
         factor = None if pump is None or pump <= 0 else _finite(flow / pump)
         if factor is None:
             _LOGGER.debug("%s flow: calibration skipped, window pump speed %s %%", self.loop.name, pump)
+            return
+        # Adopting a factor whose 100 % flow exceeds max_flow would push the fallback above the clamp.
+        if factor * PUMP_RANGE[1] > self.max_flow:
+            _LOGGER.debug("%s flow: calibration skipped, factor %.4f L/min per %% × %.0f %% exceeds %.1f L/min "
+                          "(window pump %.1f %%)", self.loop.name, factor, PUMP_RANGE[1], self.max_flow, pump)
             return
         if self._calibration is None:
             self._calibration = factor
