@@ -13,6 +13,7 @@ from operator import itemgetter, attrgetter
 
 from modbus_connection import (
     ModbusConnectionError,
+    ModbusError,
     ModbusExceptionError,
     ModbusTcpParams,
     ModbusTimeoutError,
@@ -353,7 +354,9 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         failure = None
         try:
             await self._write(unit, meta, value)
-        except (ModbusExceptionError, ModbusConnectionError, ModbusTimeoutError, OSError) as err:
+        # ModbusError is the base of every modbus-connection error: exception reply, lost link,
+        # timeout, protocol error and desync all map to one host-free error (requirement-30).
+        except (ModbusError, OSError) as err:
             failure = err
         except Exception as e:
             _LOGGER.error("Write of %s failed: %s", register, type(e).__name__)
@@ -361,6 +364,8 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             raise
         if failure is not None:
             _LOGGER.error("Write of %s failed: %s", register, type(failure).__name__)
+            if isinstance(failure, ModbusExceptionError):
+                _LOGGER.debug("Write of %s refused with Modbus exception code %s", register, failure.exception_code)
             # Raised outside the except block, so the chain carries no transport text (requirement-9).
             raise self._connection_failed("Failed to write to", failure) from None
         return value
