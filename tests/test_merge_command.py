@@ -139,8 +139,7 @@ def test_merge_stays_no_ff_when_main_has_advanced(repo):
 def test_merge_reports_the_new_main_head_as_code_change_ref(repo):
     done = _run_merge(repo, _git(repo, "rev-parse", "cr-7"))
     assert done.returncode == 0, done.stderr
-    refs = re.findall(r"^code_change_ref=([0-9a-f]{40})$", done.stdout, re.MULTILINE)
-    assert refs == [_git(repo, "rev-parse", "main")]
+    assert done.stdout == f"code_change_ref={_git(repo, 'rev-parse', 'main')}\n"
 
 
 # ---- fail closed: main is untouched on every refusal ------------------------------------
@@ -249,13 +248,57 @@ def test_refuses_and_keeps_a_sequencer_operation_in_progress(repo, marker):
     assert (repo / ".git" / marker).exists()
 
 
-def test_refuses_and_rolls_back_when_a_hook_rewrites_the_subject(repo):
-    hook = repo / ".git" / "hooks" / "prepare-commit-msg"
-    hook.write_text('#!/bin/sh\nprintf "rewritten\\n" > "$1"\n')
+@pytest.mark.parametrize("marker, is_dir", [
+    ("rebase-apply", True), ("rebase-merge", True), ("sequencer", True), ("BISECT_LOG", False),
+])
+def test_refuses_and_keeps_an_am_rebase_sequencer_or_bisect_in_progress(repo, marker, is_dir):
+    path = repo / ".git" / marker
+    if is_dir:
+        path.mkdir()
+    else:
+        path.write_text("git bisect start\n")
+    _assert_refused(repo, _run_merge(repo, "cr-7"), _git(repo, "rev-parse", "main"), f"{marker} exists")
+    assert path.exists()
+
+
+def test_refuses_while_a_stopped_git_am_is_in_progress(repo, tmp_path):
+    _git(repo, "switch", "-q", "-c", "patch-source")
+    _commit(repo, "base", "patched\n")
+    patch = tmp_path / "p.patch"
+    patch.write_text(_git(repo, "format-patch", "-1", "--stdout") + "\n")
+    _git(repo, "switch", "-q", "main")
+    _commit(repo, "base", "conflicting\n")
+    am = subprocess.run(["git", "am", str(patch)], cwd=repo, env=_env(), capture_output=True, text=True)
+    assert am.returncode != 0 and (repo / ".git" / "rebase-apply").is_dir()
+    _assert_refused(repo, _run_merge(repo, "cr-7"), _git(repo, "rev-parse", "main"), "rebase-apply exists")
+
+
+def _hook(repo: Path, name: str, body: str) -> None:
+    hook = repo / ".git" / "hooks" / name
+    hook.write_text("#!/bin/sh\n" + body)
     hook.chmod(0o755)
+
+
+def test_refuses_and_rolls_back_when_a_hook_rewrites_the_subject(repo):
+    _hook(repo, "prepare-commit-msg", 'printf "rewritten\\n" > "$1"\n')
     main_before = _git(repo, "rev-parse", "main")
     _assert_refused(repo, _run_merge(repo, "cr-7"), main_before, "subject is 'rewritten'")
     assert _git(repo, "status", "--porcelain", "--untracked-files=no") == ""
+
+
+def test_restores_the_main_ref_when_a_hook_blocks_the_rollback(repo):
+    _hook(repo, "prepare-commit-msg", 'printf "rewritten\\n" > "$1"\n')
+    _hook(repo, "post-merge", 'printf "hook edit\\n" > feature\n')
+    main_before = _git(repo, "rev-parse", "main")
+    done = _run_merge(repo, "cr-7")
+    _assert_refused(repo, done, main_before, "main ref restored to " + main_before)
+    assert (repo / "feature").read_text() == "hook edit\n"  # the working tree is left to the operator
+
+
+def test_refuses_and_rolls_back_when_a_hook_commits_on_top_of_the_merge(repo):
+    _hook(repo, "post-merge", 'git commit -q --allow-empty -m "Merge cr-7 (change_request-7)"\n')
+    main_before = _git(repo, "rev-parse", "main")
+    _assert_refused(repo, _run_merge(repo, "cr-7"), main_before, "has parents")
 
 
 # ---- refs are resolved by full refname --------------------------------------------------

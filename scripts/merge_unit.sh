@@ -4,10 +4,11 @@
 #
 # openbrain-client merge runs this as merge_command (openbrain-client.yaml) and appends one
 # argument: the commit SHA it resolved from branch-or-ref. A person may pass the branch
-# name instead. Fails closed, leaving main untouched: not on main, a merge, cherry-pick or
-# revert already in progress, dirty tracked tree, argument that resolves to no single
-# cr-<n> branch, nothing ahead of main, merge failure, subject rewritten by a hook. Branches
-# are resolved by full refname, so a tag named main or cr-<n> changes nothing.
+# name instead. Fails closed, leaving main untouched: not on main, a merge, cherry-pick,
+# revert, am, rebase, sequencer or bisect already in progress, dirty tracked tree, argument
+# that resolves to no single cr-<n> branch, nothing ahead of main, merge failure, a merge
+# commit whose subject or parents a hook changed. Branches are resolved by full refname, so
+# a tag named main or cr-<n> changes nothing.
 #
 # DHF-REQ: genesis-wp/requirement-34
 set -euo pipefail
@@ -26,7 +27,7 @@ arg=$1
 
 head=$(git symbolic-ref --quiet HEAD) || refuse "HEAD is detached, want $MAIN"
 [ "$head" = "$MAIN_REF" ] || refuse "on branch ${head#refs/heads/}, want $MAIN"
-for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD; do
+for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-apply rebase-merge sequencer BISECT_LOG; do
 	[ ! -e "$(git rev-parse --git-path "$marker")" ] || refuse "$marker exists: conclude or abort the operation in progress first"
 done
 changes=$(git status --porcelain --untracked-files=no) || refuse "git status failed"
@@ -58,9 +59,20 @@ fi
 
 merged=$(git rev-parse --verify HEAD)
 actual=$(git log -1 --format=%s "$merged")
+parents=$(git rev-list --parents -n 1 "$merged")
+problem=
 if [ "$actual" != "$subject" ]; then
-	git reset --quiet --keep "$main_before" || refuse "subject is '$actual', want '$subject'; resetting $MAIN to $main_before failed"
-	refuse "subject is '$actual', want '$subject'; $MAIN reset to $main_before"
+	problem="subject is '$actual', want '$subject'"
+elif [ "$parents" != "$merged $main_before $sha" ]; then
+	problem="merge commit $merged has parents '${parents#"$merged"}', want '$main_before $sha'"
+fi
+if [ -n "$problem" ]; then
+	git reset --quiet --keep "$main_before" && refuse "$problem; $MAIN reset to $main_before"
+	# The working tree blocked the reset (e.g. a hook edited a merged file): restore the ref only,
+	# if it still points at this merge, and leave the working tree to the operator.
+	git update-ref -m "merge_unit: roll back rejected merge" "$MAIN_REF" "$main_before" "$merged" \
+		|| refuse "$problem; resetting $MAIN to $main_before failed, $MAIN left at $(git rev-parse "$MAIN_REF")"
+	refuse "$problem; $MAIN ref restored to $main_before, working tree left for the operator"
 fi
 
 printf 'code_change_ref=%s\n' "$merged"
