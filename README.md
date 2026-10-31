@@ -54,7 +54,9 @@ Use a monotonic clock: a timestamp earlier than the previous one restarts the wi
 
 ### Read-only by default
 
-A client refuses every write (`async_set`) with `GenesisReadOnlyError` before anything is sent to the heat pump. To write, construct it with `read_only=False`; the setting cannot be changed afterwards. Writes go straight to the controller of a real heating plant without any bounds check yet, so only opt in when you mean it.
+A client refuses every write (`async_set`) with `GenesisReadOnlyError` before anything is sent to the heat pump. To write, construct it with `read_only=False`; the setting cannot be changed afterwards.
+
+Before connecting, a write-enabled client refuses with `GenesisInvalidWriteError` a register name that is unknown or not defined for its model, a coil value other than 0, 1, `True` or `False`, and a holding value that is not a finite number, is not exact at the register scale, or scales outside the 16-bit range of its datatype. An accepted holding value is sent as the rounded scaled integer (1.15 at scale 100 is sent as 115). There are no per-register set point limits yet: writes still go straight to the controller of a real heating plant, so only opt in when you mean it.
 
 ```python
 thermia = ThermiaGenesis(host, kind="stiebel_wpe_i_07_1", read_only=False)
