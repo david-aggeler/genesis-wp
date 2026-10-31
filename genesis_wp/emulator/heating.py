@@ -36,8 +36,10 @@ Inlet temperatures (requirement-31): the model serves condenser in (input 8) and
 (input 10) from the outlets, the heat and a configured flow of flow-per-percent x pump speed
 (input 39, input 44), with the fluids of ``genesis_wp.derived``: condenser in = input 9 -
 60 x heat output / (rho cp flow), brine in = input 11 + 60 x (heat output - electric power) /
-(rho cp flow). Stopped compressor or pump: inlet equals outlet. The defaults are the read-only
-read 2026-10-29 (7.6 L/min at 35 %, 9.7 L/min at 48 %).
+(rho cp flow). Stopped compressor or pump: inlet equals outlet. The temperature difference is
+bounded at ``MAX_RISE``, so a tiny pump speed with the compressor running serves a bounded
+inlet temperature, never a value that wraps the 16-bit register. The defaults are rounded from
+the read-only read 2026-10-29 (7.6 L/min at 35 %, 9.7 L/min at 48 %).
 
 A sensor the served profile has as not fitted (a capability switched off) is left alone: the
 model does not serve it (issue-12).
@@ -45,12 +47,15 @@ model does not serve it (issue-12).
 
 from __future__ import annotations
 
+import logging
 import random
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from ..derived import BRINE_MEG25, WATER, Fluid
 from .profile import RoomSetPointRule
+
+_LOGGER = logging.getLogger(__name__)
 
 # Outdoor temperatures [°C] of the seven curve points, as the controller defines them.
 CURVE_X = (17.0, 10.0, 5.0, 0.0, -5.0, -15.0, -25.0)
@@ -110,6 +115,8 @@ REFERENCE_LIFT = 29.8  # [K]
 # Loop flow per pump speed, read-only read 2026-10-29 (requirement-31).
 CONDENSER_FLOW_PER_PERCENT = 0.22  # [L/min per %]
 BRINE_FLOW_PER_PERCENT = 0.20  # [L/min per %]
+#: Largest loop temperature difference the model serves [K]; an emulator bound, not a plant value.
+MAX_RISE = 20.0
 
 #: One model step is one simulated minute; the lags below are rates per simulated minute, so a
 #: simulated clock runs whole steps and the plant response does not depend on playback speed
@@ -135,10 +142,17 @@ def interpolate(points: tuple[float, ...], outdoor: float) -> float:
 
 
 def _rise(heat: float, fluid: Fluid, flow: float) -> float:
-    """Temperature difference [K] of ``heat`` [kW] across a loop of ``flow`` [L/min]; 0 without heat or flow."""
+    """Temperature difference [K] of ``heat`` [kW] across a loop of ``flow`` [L/min]; 0 without heat or flow.
+
+    Bounded at ``MAX_RISE``.
+    """
     if heat <= 0 or flow <= 0:
         return 0.0
-    return 60.0 * heat / (fluid.volumetric_heat_capacity * flow)
+    rise = 60.0 * heat / (fluid.volumetric_heat_capacity * flow)
+    if rise > MAX_RISE:
+        _LOGGER.debug("loop temperature difference %.2f K at %.3f L/min bounded at %.1f K", rise, flow, MAX_RISE)
+        return MAX_RISE
+    return rise
 
 
 def _signed(raw: int) -> int:

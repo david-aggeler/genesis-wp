@@ -188,7 +188,7 @@ def test_a_stopped_compressor_restarts_the_window():
 
 @pytest.mark.parametrize("options", [
     {"window_s": 0}, {"window_s": math.inf}, {"min_delta_t": 0}, {"min_delta_t": -1}, {"max_flow": math.nan},
-    {"max_flow": 0}, {"fluid": "water"},
+    {"max_flow": 0}, {"fluid": "water"}, {"max_gap_s": 0}, {"max_gap_s": math.nan},
 ])
 def test_constructor_rejects_invalid_arguments(options):
     with pytest.raises(ValueError):
@@ -204,3 +204,70 @@ def test_fluid_rejects_non_positive_or_non_finite_properties(cp, density):
 def test_constructor_rejects_an_unknown_loop():
     with pytest.raises(ValueError):
         FlowEstimator("condenser")
+
+
+# ---- formal_review-11: in-area edge cases (B1-B4, B6) ----
+
+
+def test_an_oversized_integer_is_untrusted_data_not_an_overflow():
+    estimator = FlowEstimator(CONDENSER)
+    hostile = ({**STEADY, HEAT: 10**400}, {**STEADY, CONDENSER_PUMP: 10**400}, {**STEADY, SPEED: -10**400})
+    for t, data in enumerate(hostile):
+        estimate = estimator.add(30 * t, data)
+        assert estimate.value is None and estimate.source == "unknown"
+    assert estimator.add(10**400, STEADY).source == "unknown"
+    with pytest.raises(ValueError):
+        FlowEstimator(CONDENSER, window_s=10**400)
+
+
+def test_a_gap_between_running_samples_restarts_the_window():
+    gap = FlowEstimator(CONDENSER)
+    gap.add(0, STEADY)
+    assert gap.add(3600, STEADY).source == "unknown"  # never observed running in between
+    short = FlowEstimator(CONDENSER)
+    feed(short, STEADY, seconds=150)
+    assert feed(short, STEADY, start=600, seconds=210).source == "unknown"  # only 210 s since the gap
+    assert gap.calibration is None and short.calibration is None
+    tolerated = FlowEstimator(CONDENSER, max_gap_s=600)
+    tolerated.add(0, STEADY)
+    assert tolerated.add(600, STEADY).source == "calculated"
+
+
+def test_a_running_sample_without_a_positive_temperature_difference_fails_closed():
+    estimator = FlowEstimator(CONDENSER)
+    feed(estimator, STEADY, seconds=300)
+    for t, delta in ((330, -5.0), (360, 0.0)):
+        estimate = estimator.add(t, condenser_delta(delta))
+        assert estimate.source == "pump_speed"
+        assert estimate.value == pytest.approx(CONDENSER_STEADY, rel=0.01)
+    assert feed(estimator, STEADY, start=390, seconds=270).source == "pump_speed"  # the window restarted
+
+
+def test_calibration_pairs_the_window_flow_with_the_window_pump_speed():
+    estimator = FlowEstimator(CONDENSER)
+    feed(estimator, STEADY, seconds=330)
+    estimator.add(360, {**STEADY, CONDENSER_PUMP: 50.0})  # last sample at another pump speed
+    resting = estimator.add(390, {**STOPPED, CONDENSER_PUMP: 35.0})
+    assert resting.source == "pump_speed" and resting.value == pytest.approx(CONDENSER_STEADY, rel=0.01)
+
+
+@pytest.mark.parametrize("every", [10, 30, 60])
+def test_calibration_does_not_depend_on_the_poll_rate(every):
+    estimator = FlowEstimator(CONDENSER)
+    feed(estimator, STEADY, seconds=600, every=every)
+    first = estimator.calibration
+    feed(estimator, {**STEADY, HEAT: 2 * 1.73}, start=600 + every, seconds=1200 - every, every=every)
+    # Non-overlapping windows ending near 900, 1200, 1500 and 1800 s, each weighted 0.1.
+    assert first == pytest.approx(CONDENSER_STEADY / 35, rel=1e-9)
+    target = 2 * CONDENSER_STEADY / 35
+    assert estimator.calibration == pytest.approx(target + (first - target) * 0.9 ** 4, rel=0.03)
+
+
+def test_a_backward_clock_step_restarts_the_window_instead_of_freezing_the_estimate():
+    estimator = FlowEstimator(CONDENSER)
+    assert feed(estimator, STEADY).source == "calculated"
+    stepped = estimator.add(360 - 3600, STEADY)
+    assert stepped.source == "pump_speed"  # not the stale calculated value
+    assert feed(estimator, STEADY, start=-3210, seconds=300).source == "calculated"
+    repeated = estimator.add(-2910, STOPPED)  # same timestamp as the last sample: dropped
+    assert repeated.source == "calculated"

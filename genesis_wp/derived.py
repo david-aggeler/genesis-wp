@@ -9,15 +9,19 @@ with P the loop's heat [kW], ΔT its temperature difference [K], ρ [kg/L] and c
 [kJ/(kg·K)] its fluid. The ratio of sums weights each sample by its own ΔT, so one sample
 with a small ΔT cannot drive the result toward infinity. The window must cover
 ``window_s`` of uninterrupted compressor running and its mean ΔT must reach
-``min_delta_t``; otherwise there is no calculated value.
+``min_delta_t``; otherwise there is no calculated value. Uninterrupted means every sample
+is running with valid heat and a positive ΔT, and no two consecutive samples are more than
+``max_gap_s`` apart; anything else restarts the window. So does a timestamp earlier than the
+previous one (a clock step back); a repeated timestamp is dropped.
 
-Each calculated value updates a calibration factor [L/min per %] (an exponential mean of
-flow / pump speed). Without a calculated value, a calibrated estimator reports factor ×
-pump speed ("pump_speed"); an uncalibrated one reports None ("unknown"). A value that is not
-finite or lies outside 0 … ``max_flow`` is never reported.
+Each window of ``window_s`` updates a calibration factor [L/min per %]: an exponential mean
+of the window's flow over the window's time-weighted mean pump speed, once per window so its
+time constant does not depend on the poll rate. Without a calculated value, a calibrated
+estimator reports factor × pump speed ("pump_speed"); an uncalibrated one reports None
+("unknown"). A value that is not finite or lies outside 0 … ``max_flow`` is never reported.
 
 The module performs no Modbus I/O: the consumer feeds it the dicts ``ThermiaGenesis``
-returns and owns the estimator's state. It never raises on data.
+returns, with a monotonic timestamp, and owns the estimator's state. It never raises on data.
 """
 
 from __future__ import annotations
@@ -57,10 +61,14 @@ def _is_number(value) -> bool:
 
 
 def _finite(value) -> float | None:
-    """``value`` as a float when it is a finite number, else None."""
-    if not _is_number(value) or not math.isfinite(value):
+    """``value`` as a float when it is a finite number, else None (also for an int too large for a float)."""
+    if not _is_number(value):
         return None
-    return float(value)
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
 
 
 @dataclass(frozen=True)
@@ -150,12 +158,14 @@ class FlowEstimator:
     """Windowed energy-balance flow estimate for one loop; feed it with :meth:`add`."""
 
     def __init__(self, loop: Loop, fluid: Fluid | None = None, window_s: float = 300,
-                 min_delta_t: float = 2.0, max_flow: float = 60.0) -> None:
+                 min_delta_t: float = 2.0, max_flow: float = 60.0, max_gap_s: float = 120.0) -> None:
         if not isinstance(loop, Loop):
             raise ValueError(f"loop must be a Loop, got {loop!r}")
         if fluid is not None and not isinstance(fluid, Fluid):
             raise ValueError(f"fluid must be a Fluid, got {fluid!r}")
-        for name, value in (("window_s", window_s), ("min_delta_t", min_delta_t), ("max_flow", max_flow)):
+        limits = (("window_s", window_s), ("min_delta_t", min_delta_t), ("max_flow", max_flow),
+                  ("max_gap_s", max_gap_s))
+        for name, value in limits:
             if _finite(value) is None or value <= 0:
                 raise ValueError(f"{name} must be a positive finite number, got {value!r}")
         self.loop = loop
@@ -163,9 +173,11 @@ class FlowEstimator:
         self.window_s = float(window_s)
         self.min_delta_t = float(min_delta_t)
         self.max_flow = float(max_flow)
+        self.max_gap_s = float(max_gap_s)
         self._window: deque[_Sample] = deque()
         self._last_timestamp: float | None = None
         self._calibration: float | None = None
+        self._calibrated_at: float | None = None
         self._estimate = FlowEstimate(None, UNKNOWN, None)
 
     @property
@@ -174,21 +186,31 @@ class FlowEstimator:
         return self._calibration
 
     def add(self, timestamp_s: float, data: Mapping) -> FlowEstimate:
-        """Add one update dict taken at ``timestamp_s`` [s]; returns the current estimate.
+        """Add one update dict taken at ``timestamp_s`` [s, monotonic]; returns the current estimate.
 
-        A sample whose timestamp is not finite or not after the previous one is dropped and
-        the previous estimate returned.
+        A sample whose timestamp is not finite or equals the previous one is dropped and the
+        previous estimate returned. An earlier timestamp restarts the window.
         """
         timestamp = _finite(timestamp_s)
-        if timestamp is None or (self._last_timestamp is not None and timestamp <= self._last_timestamp):
-            _LOGGER.debug("%s flow: sample at %r dropped, timestamp not increasing", self.loop.name, timestamp_s)
+        if timestamp is None or timestamp == self._last_timestamp:
+            _LOGGER.debug("%s flow: sample at %r dropped, timestamp not finite or repeated", self.loop.name,
+                          timestamp_s)
             return self._estimate
+        if self._last_timestamp is not None and timestamp < self._last_timestamp:
+            _LOGGER.debug("%s flow: clock stepped back from %s to %s s, window restarted", self.loop.name,
+                          self._last_timestamp, timestamp)
+            self._window.clear()
+            self._calibrated_at = None
         self._last_timestamp = timestamp
-        sample = self._sample(timestamp, data if isinstance(data, Mapping) else {})
+        if not isinstance(data, Mapping):
+            _LOGGER.debug("%s flow: update is a %s, not a mapping; treated as empty", self.loop.name,
+                          type(data).__name__)
+            data = {}
+        sample = self._sample(timestamp, data)
         self._update_window(sample)
         flow = self._calculated()
         if flow is not None:
-            self._calibrate(flow, sample.pump)
+            self._calibrate(flow)
             self._estimate = FlowEstimate(flow, CALCULATED, self._calibration)
         else:
             self._estimate = self._fallback(sample.pump)
@@ -201,18 +223,23 @@ class FlowEstimator:
         delta_t = _difference(data, loop.warm, loop.cold)
         pump = _finite(data.get(loop.pump))
         if pump is not None and not PUMP_RANGE[0] <= pump <= PUMP_RANGE[1]:
+            _LOGGER.debug("%s flow: pump speed %s %% outside 0 … 100 %%, not trusted", loop.name, pump)
             pump = None
         running = speed is not None and speed > 0 and heat is not None and heat > 0
         return _Sample(timestamp, running, heat, delta_t, pump)
 
     def _update_window(self, sample: _Sample) -> None:
         """Keep an uninterrupted run of valid running samples that just covers ``window_s``."""
-        if not sample.running or sample.delta_t is None:
+        if not sample.running or sample.delta_t is None or sample.delta_t <= 0:
             if self._window:
                 _LOGGER.debug("%s flow: window cleared (running=%s, ΔT=%s)", self.loop.name, sample.running,
                               sample.delta_t)
             self._window.clear()
             return
+        if self._window and sample.timestamp - self._window[-1].timestamp > self.max_gap_s:
+            _LOGGER.debug("%s flow: window restarted after a %.0f s gap (maximum %.0f s)", self.loop.name,
+                          sample.timestamp - self._window[-1].timestamp, self.max_gap_s)
+            self._window.clear()
         self._window.append(sample)
         cutoff = sample.timestamp - self.window_s
         while len(self._window) > 1 and self._window[1].timestamp <= cutoff:
@@ -245,17 +272,35 @@ class FlowEstimator:
         _LOGGER.debug("%s flow: %s %.3f L/min", self.loop.name, source, flow)
         return flow
 
-    def _calibrate(self, flow: float, pump: float | None) -> None:
-        if pump is None or pump <= 0:
+    def _window_pump(self) -> float | None:
+        """Time-weighted mean pump speed [%] over the window's intervals, or None when one is unknown."""
+        window = self._window
+        pump_time = duration = 0.0
+        for previous, current in zip(window, list(window)[1:]):
+            if current.pump is None:
+                return None
+            dt = current.timestamp - previous.timestamp
+            pump_time += current.pump * dt
+            duration += dt
+        return _finite(pump_time / duration)
+
+    def _calibrate(self, flow: float) -> None:
+        """Update the calibration from the window's flow, at most once per ``window_s``."""
+        end = self._window[-1].timestamp
+        if self._calibrated_at is not None and end - self._calibrated_at < self.window_s:
             return
-        factor = _finite(flow / pump)
+        pump = self._window_pump()
+        factor = None if pump is None or pump <= 0 else _finite(flow / pump)
         if factor is None:
+            _LOGGER.debug("%s flow: calibration skipped, window pump speed %s %%", self.loop.name, pump)
             return
         if self._calibration is None:
             self._calibration = factor
         else:
             self._calibration += CALIBRATION_WEIGHT * (factor - self._calibration)
-        _LOGGER.debug("%s flow: calibration %.4f L/min per %%", self.loop.name, self._calibration)
+        self._calibrated_at = end
+        _LOGGER.debug("%s flow: calibration %.4f L/min per %% (window pump %.1f %%)", self.loop.name,
+                      self._calibration, pump)
 
     def _fallback(self, pump: float | None) -> FlowEstimate:
         if self._calibration is None or pump is None:

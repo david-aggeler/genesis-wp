@@ -67,3 +67,25 @@ async def test_inlet_temperatures_are_served_as_captured_without_dynamics(start_
     inputs = emu.profile.blocks["input_registers"]
     assert data["input_condenser_in_temperature"] == inputs.value(heating.CONDENSER_IN) / 100
     assert data["input_brine_in_temperature"] == inputs.value(heating.BRINE_IN) / 100
+
+
+async def test_running_compressor_without_pump_flow_serves_inlet_equal_to_outlet(start_emulator):
+    no_flow = {("input_registers", heating.CONDENSER_PUMP): 0, ("input_registers", heating.BRINE_PUMP): 0}
+    emu = await start_emulator(PROFILE_615, dynamics=True, overrides=no_flow)
+    emu.step()
+    data = await library_full_update(emu)
+    assert data["input_compressor_speed_rpm"] > 0 and data[HEAT] > 0
+    assert data[CONDENSER_PUMP] == data[BRINE_PUMP] == 0
+    assert served_delta_t(data) == (0.0, 0.0)
+
+
+async def test_a_tiny_pump_speed_serves_a_bounded_inlet_temperature_not_a_wrapped_one(start_emulator):
+    tiny = {("input_registers", heating.CONDENSER_PUMP): 30, ("input_registers", heating.BRINE_PUMP): 30}  # 0.3 %
+    emu = await start_emulator(PROFILE_615, dynamics=True, overrides=tiny)
+    emu.step()
+    data = await library_full_update(emu)
+    assert data["input_compressor_speed_rpm"] > 0 and data[HEAT] > 0
+    condenser, brine = served_delta_t(data)
+    assert condenser == pytest.approx(heating.MAX_RISE, abs=0.01)
+    assert brine == pytest.approx(heating.MAX_RISE, abs=0.01)
+    assert data["input_condenser_in_temperature"] < data["input_condenser_out_temperature"]

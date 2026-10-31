@@ -430,13 +430,18 @@ class Emulator:
     }
 
     def _has_heating_registers(self) -> bool:
-        holding, inputs = self.profile.blocks[HOLDING_REGISTERS], self.profile.blocks[INPUT_REGISTERS]
-        return (
-            all(holding.implemented(a) for a in (*heating.HOLDING, heating.MODE_HC2, *heating.COOLING_HOLDING))
-            and all(inputs.implemented(a) for a in (*heating.INPUTS, *heating.COMPRESSOR))
-            and self.profile.blocks[COILS].implemented(heating.ENABLE_PASSIVE_COOLING)
-            and self.profile.blocks[DISCRETE_INPUTS].implemented(heating.PASSIVE_COOLING_ACTIVE)
+        required = (
+            (HOLDING_REGISTERS, (*heating.HOLDING, heating.MODE_HC2, *heating.COOLING_HOLDING)),
+            (INPUT_REGISTERS, (*heating.INPUTS, *heating.COMPRESSOR)),
+            (COILS, (heating.ENABLE_PASSIVE_COOLING,)),
+            (DISCRETE_INPUTS, (heating.PASSIVE_COOLING_ACTIVE,)),
         )
+        missing = [(block, a) for block, addresses in required for a in addresses
+                   if not self.profile.blocks[block].implemented(a)]
+        if missing:
+            _LOGGER.info("profile %s: heating model off, not implemented: %s", self.profile.name,
+                         ", ".join(f"{block} {a}" for block, a in missing))
+        return not missing
 
     def _not_fitted_inputs(self) -> frozenset[int]:
         """Input addresses whose served raw value is the model's not-fitted sentinel."""
