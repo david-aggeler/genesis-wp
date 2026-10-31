@@ -302,6 +302,11 @@ class FlowEstimator:
         if factor is None:
             _LOGGER.debug("%s flow: calibration skipped, window pump speed %s %%", self.loop.name, pump)
             return
+        # Adopting a factor whose 100 % flow exceeds max_flow would push the fallback above the clamp.
+        if factor * PUMP_RANGE[1] > self.max_flow:
+            _LOGGER.debug("%s flow: calibration skipped, factor %.4f L/min per %% × %.0f %% exceeds %.1f L/min "
+                          "(window pump %.1f %%)", self.loop.name, factor, PUMP_RANGE[1], self.max_flow, pump)
+            return
         if self._calibration is None:
             self._calibration = factor
         else:

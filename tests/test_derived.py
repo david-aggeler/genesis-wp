@@ -5,8 +5,10 @@ Hermetic: the estimators take update dicts and need no device and no emulator.
 
 from __future__ import annotations
 
+import logging
 import math
 import random
+import re
 
 import pytest
 
@@ -244,6 +246,41 @@ def test_constructor_rejects_a_maximum_gap_not_shorter_than_the_window(max_gap_s
 def test_constructor_accepts_a_maximum_gap_shorter_than_the_window():
     estimator = FlowEstimator(CONDENSER, window_s=300, max_gap_s=299)
     assert (estimator.window_s, estimator.max_gap_s) == (300.0, 299.0)
+
+
+def skipped_factors(caplog) -> list[float]:
+    """Factors [L/min per %] named by debug records of a skipped calibration."""
+    factors = []
+    for record in caplog.records:
+        message = record.getMessage()
+        if record.levelno == logging.DEBUG and "calibration" in message and "skipped" in message:
+            factors += [float(number) for number in re.findall(r"factor (\d+(?:\.\d+)?)", message)]
+    return factors
+
+
+# DHF-REQ: genesis-wp/requirement-31  DHF-TEST: genesis-wp/ac-129
+def test_an_implausible_calibration_window_leaves_the_calibration_unchanged(caplog):
+    caplog.set_level(logging.DEBUG, logger="genesis_wp.derived")
+    low_pump = {**STEADY, CONDENSER_PUMP: 2.0}  # 7.6 L/min over 2 %: 3.8 L/min per %, × 100 % > 60 L/min
+    implausible = CONDENSER_STEADY / 2.0
+
+    first = FlowEstimator(CONDENSER)
+    assert feed(first, low_pump).source == "calculated"
+    assert first.calibration is None
+    assert any(factor == pytest.approx(implausible, rel=0.01) for factor in skipped_factors(caplog))
+    resting = first.add(400, {**STOPPED, CONDENSER_PUMP: 35.0})
+    assert resting.source == "unknown" and resting.value is None
+
+    caplog.clear()
+    second = FlowEstimator(CONDENSER)
+    feed(second, STEADY)  # a plausible window at 35 %
+    earlier = second.calibration
+    assert earlier == pytest.approx(CONDENSER_STEADY / 35, rel=1e-9)
+    assert feed(second, low_pump, start=390, seconds=330).source == "calculated"  # a full window at 2 %
+    assert second.calibration == earlier
+    assert any(factor == pytest.approx(implausible, rel=0.01) for factor in skipped_factors(caplog))
+    resting = second.add(750, {**STOPPED, CONDENSER_PUMP: 35.0})
+    assert resting.source == "pump_speed" and resting.value == pytest.approx(earlier * 35, rel=1e-9)
 
 
 def test_a_running_sample_without_a_positive_temperature_difference_fails_closed():
