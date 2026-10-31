@@ -132,8 +132,9 @@ CONDITIONAL = {"holding_fixed_system_supply_set_point": "coil_enable_fixed_syste
 PLAUSIBLE_TEMPERATURE = (-50.0, 100.0)
 #: Registers that read implausible values for a known, recorded reason.
 KNOWN_IMPLAUSIBLE = {
-    "input_hgw_supply_line_temperature": "issue-15",
-    "holding_outdoor_temperature_sensor": "issue-15",
+    # Platform register the Stiebel document does not list (platform_doc); no source declares a
+    # sentinel, so the hot-gas module's absence reads as 200.0 (issue-4).
+    "input_hgw_supply_line_temperature": "issue-4",
 }
 
 #: Outdoor temperatures [°C] of the seven heat curve points, inputs 20-26 (formal_review-3).

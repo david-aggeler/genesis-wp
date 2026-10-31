@@ -12,6 +12,8 @@ An update reads registers in chunks of up to 16 per request. If the heat pump re
 
 The Stiebel WPE-I reports an unwired sensor with a fixed raw value (20000 at scale 100, 2000 for the room sensor at scale 10), which would otherwise decode as 200.0 °C. For registers where the Stiebel documentation declares this value, the library reports `None` instead. Declarations are per model (`KEY_NOT_FITTED` in `genesis_wp/const.py`); other models keep reporting the number, because Thermia's documents declare no such value.
 
+A register the documentation declares valid only while another register selects it reports `None` unless that selector is in the same update and reads the documented value. On the WPE-I this is the building-management outdoor temperature (holding 118), valid only while holding 117 is 1; with the PT1000 sensor selected it is `None` instead of a stale 200.0 °C. Declarations are per model (`KEY_VALID_WHEN` in `genesis_wp/const.py`).
+
 ### Register sources
 
 Every register the WPE-I model reads declares where it comes from, per model (`KEY_SOURCE` in `genesis_wp/const.py`): `model_doc` when Stiebel's WPE-I Modbus document lists it, `platform_doc` when only Thermia's Genesis 17.1 platform document does, and `probe` when only a recorded read-only probe backs it (`KEY_SOURCE_REF` names the capture). A `platform_doc` register may not be supported by the WPE-I, for example the hot-gas recovery and external electricity meter groups. The library still reads and reports it, so a consumer can label it rather than hide it.

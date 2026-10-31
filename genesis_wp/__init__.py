@@ -140,6 +140,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         self.capabilities: dict[str, Capability] = {}
         self.labels: dict[str, EnumValue] = {}
         self._enum_raw: dict = {}  # raw values of registers decoded to a label during the last read
+        self._raw: dict = {}  # raw first word of every register the last read decoded
         self._capability_overrides = _capabilities.validate_overrides(capability_overrides)
         self._capabilities_seen: set[str] = set()
         self._unit = unit
@@ -238,6 +239,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             return {}
 
         # _LOGGER.debug("RAW data: %s", raw_data)
+        self._apply_valid_when(raw_data)
         data = {}
         try:
             for i, (name, val) in enumerate(raw_data.items()):
@@ -266,6 +268,21 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             self._kind, data, overrides=self._capability_overrides, seen=self._capabilities_seen
         )
         return data
+
+    # DHF-REQ: genesis-wp/requirement-29
+    def _apply_valid_when(self, values) -> None:
+        """None for a register whose declared selector is not in this read or reads another raw value."""
+        for name in values:
+            condition = REGISTERS[name].get(KEY_VALID_WHEN, {}).get(self._kind)
+            if condition is None or values[name] is None:
+                continue
+            selector, required = condition
+            raw = self._raw.get(selector)
+            if raw == required:
+                continue
+            reason = "not in this update" if raw is None else f"reads {raw}, not {required}"
+            _LOGGER.debug("%s reported as None: selector %s %s", name, selector, reason)
+            values[name] = None
 
     def _decode_labels(self, data) -> dict[str, EnumValue]:
         labels = {}
@@ -357,6 +374,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         unit = await self._ensure_unit()
         self.unread = set()
         self._enum_raw = {}
+        self._raw = {}
         raw_data = {}
         failure = None
         try:
@@ -449,6 +467,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             self._chunk_unread(chunk, length, "empty response")
             return
         for name, offset in chunk["slots"].items():
+            self._raw[name] = read_data[offset]
             raw_data[name] = self._decode(name, read_data, offset)
 
     def _decode(self, name, words, offset):
