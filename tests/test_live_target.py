@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 
-from genesis_wp import GenesisReadOnlyError, ThermiaGenesis
+from genesis_wp import GenesisReadOnlyError, ThermiaConnectionError, ThermiaGenesis
 
 from .conftest import TEST_CLASSES
 from .harness import PROFILE_615, PROFILES, WPE_I_KIND
@@ -103,9 +103,10 @@ async def test_library_write_through_the_live_transport_is_refused_before_connec
     with pytest.raises(GenesisReadOnlyError):
         await client.async_set("holding_comfort_wheel_setting", 21)
     # Second line: even a client opted in to writes cannot write through this unit. The
-    # library logs a failed write instead of raising it.
+    # library logs the failed write and raises it (requirement-30).
     allowed = ThermiaGenesis(kind=WPE_I_KIND, unit=unit, delay=0, read_only=False)
-    await allowed.async_set("holding_comfort_wheel_setting", 21)
+    with pytest.raises(ThermiaConnectionError):
+        await allowed.async_set("holding_comfort_wheel_setting", 21)
     assert "ReadOnlyTransportError" in caplog.text
     await unit.close()
     assert emu.connections == 0
