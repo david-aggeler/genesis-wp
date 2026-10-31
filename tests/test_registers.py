@@ -103,3 +103,123 @@ def test_holding_307_308_311_312_are_mega_only_at_thermia_scale():
     for address, meta in entries.items():
         assert meta[KEY_SCALE] == 100, address
         assert meta[MODEL_MEGA] and not meta[MODEL_STIEBEL_WPE_I_071], address
+
+
+# Closed sets of requirement-27, written out here so the test does not take them from the code under test.
+UNITS = {"°C", "K", "bar", "%", "W", "kW", "kWh", "A", "V", "h", "s", "rpm", None}
+KINDS = {
+    "temperature", "temperature_delta", "pressure", "percent", "power", "energy", "current",
+    "voltage", "duration", "speed", "count", "state",
+}
+# Source unit -> declared unit (ac-106): non-quantities and no unit are None, bar(g) is bar.
+SOURCE_UNIT_MAP = {"on/off": None, "active/inactive": None, "enum": None, "bar(g)": "bar", "step": None}
+# Kind of a register with a physical unit; a register without one is a count or a state.
+KIND_OF_UNIT = {
+    "°C": "temperature", "K": "temperature_delta", "bar": "pressure", "%": "percent", "W": "power",
+    "kW": "power", "kWh": "energy", "A": "current", "V": "voltage", "h": "duration", "s": "duration",
+    "rpm": "speed",
+}
+NON_QUANTITY_SOURCE_UNITS = {"on/off", "active/inactive", "enum"}
+
+
+def _source_unit(facts: dict, block: str, address: int):
+    """The verbatim source unit for an address; KeyError when the source lists no unit for it."""
+    found = [unit for unit, addresses in facts[block].items() if address in addresses]
+    assert len(found) <= 1, (block, address, found)
+    if not found:
+        raise KeyError((block, address))
+    return found[0]
+
+
+def _wpe_i_source_unit(meta: dict):
+    """The source unit of a WPE-I register per its declared source; None for a probe register."""
+    from genesis_wp.const import KEY_ADDRESS, KEY_REG_TYPE, KEY_SOURCE, SOURCE_MODEL_DOC, SOURCE_PLATFORM_DOC
+
+    from .register_sources import STIEBEL_WPE_I_071_UNITS, THERMIA_GENESIS_17_1_UNITS
+
+    source = meta[KEY_SOURCE][MODEL_STIEBEL_WPE_I_071]
+    facts = {SOURCE_MODEL_DOC: STIEBEL_WPE_I_071_UNITS, SOURCE_PLATFORM_DOC: THERMIA_GENESIS_17_1_UNITS}.get(source)
+    if facts is None:
+        return None
+    return _source_unit(facts, meta[KEY_REG_TYPE], meta[KEY_ADDRESS])
+
+
+def _expected_unit(meta: dict):
+    from genesis_wp.const import KEY_ADDRESS, KEY_REG_TYPE
+
+    from .register_sources import UNIT_CORRECTIONS
+
+    source_unit = _wpe_i_source_unit(meta)
+    correction = UNIT_CORRECTIONS.get((meta[KEY_REG_TYPE], meta[KEY_ADDRESS]))
+    if correction is not None:
+        assert correction["source_unit"] == source_unit, correction
+        return correction["unit"]
+    return SOURCE_UNIT_MAP.get(source_unit, source_unit)
+
+
+def _wpe_i_registers():
+    return {name: meta for name, meta in REGISTERS.items() if meta[MODEL_STIEBEL_WPE_I_071]}
+
+
+# DHF-REQ: genesis-wp/requirement-27  DHF-TEST: genesis-wp/ac-106
+def test_every_wpe_i_register_declares_its_source_unit_and_a_kind():
+    from genesis_wp.const import KEY_KIND, KEY_UNIT
+
+    model = MODEL_STIEBEL_WPE_I_071
+    for name, meta in REGISTERS.items():
+        if not meta[model]:
+            assert model not in meta.get(KEY_UNIT, {}) and model not in meta.get(KEY_KIND, {}), name
+    registers = _wpe_i_registers()
+    assert len(registers) == 268
+    for name, meta in registers.items():
+        assert model in meta.get(KEY_UNIT, {}), f"{name}: no unit"
+        assert model in meta.get(KEY_KIND, {}), f"{name}: no kind"
+        unit, kind = meta[KEY_UNIT][model], meta[KEY_KIND][model]
+        assert unit in UNITS, (name, unit)
+        assert kind in KINDS, (name, kind)
+        assert unit == _expected_unit(meta), (name, unit)
+
+
+# DHF-REQ: genesis-wp/requirement-27  DHF-TEST: genesis-wp/ac-106
+def test_every_wpe_i_kind_fits_its_unit():
+    """A unit fixes the kind; a bit, a status word or an enumerated register is a state."""
+    from genesis_wp.const import KEY_DATATYPE, KEY_ENUM, KEY_KIND, KEY_UNIT, TYPE_BIT, TYPE_STATUS
+
+    model = MODEL_STIEBEL_WPE_I_071
+    for name, meta in _wpe_i_registers().items():
+        unit, kind = meta[KEY_UNIT][model], meta[KEY_KIND][model]
+        if unit is not None:
+            assert kind == KIND_OF_UNIT[unit], (name, unit, kind)
+            continue
+        assert kind in ("count", "state"), (name, kind)
+        enumerated = meta[KEY_DATATYPE] in (TYPE_BIT, TYPE_STATUS) or model in meta.get(KEY_ENUM, {})
+        if enumerated or _wpe_i_source_unit(meta) in NON_QUANTITY_SOURCE_UNITS:
+            assert kind == "state", (name, kind)
+
+
+# DHF-REQ: genesis-wp/requirement-27  DHF-TEST: genesis-wp/ac-106
+def test_unit_corrections_name_an_address_unit_and_evidence():
+    from .register_sources import UNIT_CORRECTIONS
+
+    assert set(UNIT_CORRECTIONS) == {("holding", 63)}
+    for key, correction in UNIT_CORRECTIONS.items():
+        assert set(correction) == {"source_unit", "unit", "evidence"}, key
+        assert correction["unit"] in UNITS and correction["evidence"], key
+    assert UNIT_CORRECTIONS[("holding", 63)]["source_unit"] == "min"
+    assert UNIT_CORRECTIONS[("holding", 63)]["unit"] == "s"
+
+
+# DHF-REQ: genesis-wp/requirement-27  DHF-TEST: genesis-wp/ac-107
+@pytest.mark.parametrize(("block", "address", "unit", "kind"), [
+    ("input", 127, "bar", "pressure"),
+    ("input", 128, "bar", "pressure"),
+    ("input", 43, "%", "percent"),
+    ("input", 4, None, "count"),
+])
+def test_issue_5_registers_carry_their_documented_unit_and_kind(block, address, unit, kind):
+    from genesis_wp.const import KEY_ADDRESS, KEY_KIND, KEY_REG_TYPE, KEY_UNIT
+
+    model = MODEL_STIEBEL_WPE_I_071
+    [meta] = [m for m in _wpe_i_registers().values() if (m[KEY_REG_TYPE], m[KEY_ADDRESS]) == (block, address)]
+    assert meta.get(KEY_UNIT, {}).get(model, "undeclared") == unit
+    assert meta.get(KEY_KIND, {}).get(model) == kind
