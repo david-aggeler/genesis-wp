@@ -134,6 +134,19 @@ THERMIA_GENESIS_17_1_UNITS = {
     },
 }
 
+# Enumeration rows per block (requirement-32, ac-123): the addresses whose type column reads
+# `Aufzählung` (Stiebel) or `enum` (Thermia), each row checked against the source text. Stiebel
+# holding 309 (heating circuit 4 mode) has an empty type column and is not listed.
+STIEBEL_WPE_I_071_ENUMS = {
+    "input": frozenset({413}),
+    "holding": frozenset({117, 124, 298, 305}),
+}
+
+THERMIA_GENESIS_17_1_ENUMS = {
+    "input": frozenset({1, 55, 56, 62, 63, 64, 65, 66, 82}),
+    "holding": frozenset({0, 117, 124, 298, 321}),
+}
+
 # Source corrections (requirement-27, ac-106): (block, address) -> the source unit overridden, the
 # declared unit and the evidence. Each needs an owner decision.
 UNIT_CORRECTIONS = {

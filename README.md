@@ -34,7 +34,7 @@ The controller has no "installed modules" register. After each update, `client.c
 
 ### SG Ready labels
 
-`client.data` keeps raw values. For enumerated registers with documented values, `client.labels[name]` is an `EnumValue(raw, label)`: the SG Ready mode (holding 124: `normal`, `load_up`, `utility_block`, `maximum`) and the smart-grid state (input 82: `utility_block`, `normal`, `comfort`, `maximum`). A value without a documented label has `label=None` and is logged, never mapped to a neighbor.
+`client.data` keeps raw values. For enumerated registers with documented values, `client.labels[name]` is an `EnumValue(raw, label)`: the SG Ready mode (holding 124: `normal`, `load_up`, `utility_block`, `maximum`) and the smart-grid state (input 82: `utility_block`, `normal`, `comfort`, `maximum`). On the WPE-I also the operational mode (holding 0: `off`, `standby`, `on_auto`), the outdoor temperature source (holding 117: `sensor`, `bms`), the heating circuit 2 mode (holding 298: `heat`, `cool`, `auto`), the immersion heater enable (holding 321: `disabled`, `internal`) and the KSM fan test status (input 413: `no_test_recorded`, `not_initialized`, `running`, `passed`, `failed`). A value without a documented label has `label=None` and is logged, never mapped to a neighbor.
 
 The demand registers (inputs 1, 55, 56, 62-66) decode to strings such as `Heat` or `No demand`. On the Genesis 17 models (WPE-I, Calibra RXT) they follow the documents' value table, including `Passive cooling` (8) and `OFF` (100), and carry a `client.labels` entry; an undocumented value is reported as its raw number. Legacy models keep the upstream decoding.
 
