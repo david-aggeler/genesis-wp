@@ -21,6 +21,7 @@ from genesis_wp.const import (
     KEY_DATATYPE,
     KEY_NOT_FITTED,
     KEY_SCALE,
+    KEY_VALID_WHEN,
     REGISTERS,
     TYPE_BIT,
     TYPE_STATUS,
@@ -132,8 +133,9 @@ CONDITIONAL = {"holding_fixed_system_supply_set_point": "coil_enable_fixed_syste
 PLAUSIBLE_TEMPERATURE = (-50.0, 100.0)
 #: Registers that read implausible values for a known, recorded reason.
 KNOWN_IMPLAUSIBLE = {
-    "input_hgw_supply_line_temperature": "issue-15",
-    "holding_outdoor_temperature_sensor": "issue-15",
+    # Platform register the Stiebel document does not list (platform_doc); no source declares a
+    # sentinel, so the hot-gas module's absence reads as 200.0 (issue-4).
+    "input_hgw_supply_line_temperature": "issue-4",
 }
 
 #: Outdoor temperatures [°C] of the seven heat curve points, inputs 20-26 (formal_review-3).
@@ -183,23 +185,30 @@ def every_register_reads(s: Snapshot) -> list[str]:
 
 
 def values_have_their_declared_type(s: Snapshot) -> list[str]:
-    """Bits are booleans, status registers labels, numbers numbers; None only for a declared sentinel."""
-    wrong = (_type_error(name, value) for name, value in s.data.items())
+    """Bits are booleans, status registers labels, numbers numbers; None only for a declared sentinel
+    or a declared validity condition the same read does not meet."""
+    wrong = (_type_error(name, value, s.data) for name, value in s.data.items())
     return [error for error in wrong if error]
 
 
-def _type_error(name: str, value) -> str | None:
+def _type_error(name: str, value, data: dict) -> str | None:
     meta = REGISTERS[name]
     kind = meta[KEY_DATATYPE]
     if value is None:
-        declared = WPE_I_KIND in meta.get(KEY_NOT_FITTED, {})
-        return None if declared else f"{name}: None without a declared not-fitted sentinel"
+        declared = WPE_I_KIND in meta.get(KEY_NOT_FITTED, {}) or _condition_unmet(meta, data)
+        return None if declared else f"{name}: None without a declared not-fitted sentinel or unmet condition"
     if kind == TYPE_BIT:
         return None if isinstance(value, bool) else f"{name}: {value!r} is not a boolean"
     if kind == TYPE_STATUS:
         return None if isinstance(value, str) else f"{name}: {value!r} is not a status label"
     finite = not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
     return None if finite else f"{name}: {value!r} is not a finite number"
+
+
+def _condition_unmet(meta: dict, data: dict) -> bool:
+    """A declared KEY_VALID_WHEN whose selector is missing or reads another value (scale-1 selectors)."""
+    condition = meta.get(KEY_VALID_WHEN, {}).get(WPE_I_KIND)
+    return condition is not None and data.get(condition[0]) != condition[1]
 
 
 def temperatures_are_plausible(s: Snapshot) -> list[str]:

@@ -34,6 +34,11 @@ NOT_FITTED_ON_UNIT = frozenset({
     "input_room_temperature_sensor",
 })
 
+# Registers the register map declares valid only while a selector holds a documented value
+# (KEY_VALID_WHEN, requirement-29). The unit's selector reads otherwise (holding 117 = 0, the
+# PT1000 sensor), so the capture's 200.0 is no supplied value; the library now reports None.
+INVALID_ON_UNIT = frozenset({"holding_outdoor_temperature_sensor"})
+
 
 # Registers added to the WPE-I model after the capture (change_request-8): name -> (block, address).
 # Expected values are the profile's raw values decoded with the register's scale and sign.
@@ -59,12 +64,15 @@ def expected_library_values(profile: str) -> dict:
     """Decoded values the library is expected to produce for this firmware.
 
     The captured values the probe's library decoded from the real unit, with declared
-    "not fitted" sensors as None instead of 200.0.
+    "not fitted" sensors and registers whose declared condition is unmet as None instead of 200.0.
     """
     raw = json.loads((FIXTURES / "library_values" / f"{profile}.json").read_text())
     expected = {name: value for name, value in raw.items() if value is not None}
     for name in NOT_FITTED_ON_UNIT:
         assert expected[name] == 200.0, f"{name}: capture no longer reads the sentinel"
+        expected[name] = None
+    for name in INVALID_ON_UNIT:
+        assert expected[name] == 200.0, f"{name}: capture no longer reads the stale default"
         expected[name] = None
     from genesis_wp.emulator import get_profile
 
