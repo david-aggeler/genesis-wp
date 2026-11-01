@@ -20,7 +20,7 @@ any capability; the library never writes to the device to find out.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from .const import KEY_ADDRESS, KEY_NOT_FITTED, KEY_REG_TYPE, MODEL_STIEBEL_WPE_I_071, REGISTERS
@@ -310,6 +310,25 @@ def evaluate(
             state = overrides[rule.name]
         result[rule.name] = Capability(rule.name, state, tuple(evidence), gates, overridden, enabled, rule.rule_for(kind))
     return result
+
+
+def can_be_seen(name: str) -> bool:
+    """True for a capability whose rule records a "seen" observation (running signal, seen non-zero)."""
+    rule = _RULES[name]
+    return rule.rule == RULE_SEEN_NONZERO or (rule.rule == RULE_MODULE and bool(rule.running))
+
+
+def validate_seen(seen: Iterable[str] | None) -> set[str]:
+    """Check a seeded seen set: known capability names whose rule can be seen (fail closed)."""
+    if isinstance(seen, str):
+        raise ValueError(f"capabilities_seen must be an iterable of capability names, not the string {seen!r}")
+    names = set(seen or ())
+    for name in names:
+        if name not in _RULES:
+            raise ValueError(f"unknown capability {name!r}; known: {', '.join(CAPABILITY_NAMES)}")
+        if not can_be_seen(name):
+            raise ValueError(f"capability {name} cannot be seen running: its rule has no running or seen signal")
+    return names
 
 
 def validate_overrides(overrides: Mapping[str, str] | None) -> dict[str, str]:
