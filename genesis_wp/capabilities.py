@@ -23,7 +23,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from .const import KEY_ADDRESS, KEY_NOT_FITTED, KEY_REG_TYPE, REGISTERS
+from .const import KEY_ADDRESS, KEY_NOT_FITTED, KEY_REG_TYPE, MODEL_STIEBEL_WPE_I_071, REGISTERS
 from .groups import REGISTER_GROUPS, register_category, register_concerns
 
 PRESENT = "present"
@@ -63,6 +63,12 @@ class CapabilityRule:
     #: Name fragments gated regardless of group, and fragments taken out of the gated groups.
     include: tuple[str, ...] = ()
     exclude: tuple[str, ...] = ()
+    #: Models the module is part of every unit of: there it is RULE_BUILT_IN whatever ``rule`` says.
+    built_in: tuple[str, ...] = ()
+
+    def rule_for(self, kind: str) -> str:
+        """The evidence rule that decides the capability on a ``kind`` plant."""
+        return RULE_BUILT_IN if kind in self.built_in else self.rule
 
 
 @dataclass(frozen=True)
@@ -78,6 +84,8 @@ class Capability:
     overridden: bool = False
     #: Switched on: the module's enable coil (None when it has none or it was not read).
     enabled: bool | None = None
+    #: The evidence rule that decided the state (RULE_*), e.g. RULE_BUILT_IN or RULE_ANY_OF.
+    rule: str = RULE_MODULE
 
 
 CAPABILITY_RULES = (
@@ -119,9 +127,19 @@ CAPABILITY_RULES = (
         "room_sensor", sensors=("input_room_temperature_sensor",),
         include=("room_temperature_sensor", "room_sensor"),
     ),
+    # The electric emergency/auxiliary heater is built into every WPE-I 07.1 Plus: Stiebel WPE-I installation
+    # manual DM0000121176, "Der WPM G ... regelt die eingebaute elektrische Not-/Zusatzheizung".
     CapabilityRule(
-        "additional_heater", groups=("additional_heater",), rule=RULE_ANY_SET,
-        signals=("coil_enable_external_additional_heater", "coil_enable_internal_additional_heater", "holding_enabled_immersion_heater"),
+        "internal_heater", groups=("additional_heater",), exclude=("external",), rule=RULE_ANY_SET,
+        signals=("coil_enable_internal_additional_heater", "holding_enabled_immersion_heater"),
+        built_in=(MODEL_STIEBEL_WPE_I_071,),
+    ),
+    CapabilityRule(
+        "external_heater", enable="coil_enable_external_additional_heater",
+        include=("external_additional_heater", "external_heater"), exclude=("pool",),
+    ),
+    CapabilityRule(
+        "additional_heater", groups=("additional_heater",), rule=RULE_ANY_OF, members=("internal_heater", "external_heater"),
     ),
     CapabilityRule(
         "electric_meter", groups=("electric_meter",), rule=RULE_ANY_POSITIVE,
@@ -283,14 +301,14 @@ def evaluate(
         gates = gated_registers(rule, kind)
         if not gates:
             continue
-        state, evidence, enabled = _EVALUATORS[rule.rule](rule, kind, data, seen, gates, result)
+        state, evidence, enabled = _EVALUATORS[rule.rule_for(kind)](rule, kind, data, seen, gates, result)
         if not evidence:
             evidence = [f"no evidence register enabled for {kind}"]
         overridden = rule.name in overrides
         if overridden:
             evidence = [f"overridden by the consumer to {overrides[rule.name]} (detected {state})", *evidence]
             state = overrides[rule.name]
-        result[rule.name] = Capability(rule.name, state, tuple(evidence), gates, overridden, enabled)
+        result[rule.name] = Capability(rule.name, state, tuple(evidence), gates, overridden, enabled, rule.rule_for(kind))
     return result
 
 

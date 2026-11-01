@@ -47,7 +47,7 @@ METER_PHASE_VOLTAGE = 230.0  # [V], line to neutral; line-to-line 400 V does not
 SPECIAL_ON = {
     # SG Ready load-up active: DI22 closed, mode load-up, smart-grid state comfort (design_decision-3).
     "smart_grid": {"dinput_smart_grid_2": 1, "holding_power_consumption_control": 1, "input_comfort_mode": 5},
-    "additional_heater": {"coil_enable_external_additional_heater": 1},
+    "internal_heater": {"coil_enable_internal_additional_heater": 1},
 }
 
 
@@ -81,7 +81,7 @@ def selection_overrides(profile: Profile, selection: Mapping[str, bool]) -> tupl
             overrides.update(sub)
             notes.extend(sub_notes)
             continue
-        changes = _module(rule, kind, on, profile) if rule.rule == lib.RULE_MODULE else _special(rule, kind, on)
+        changes = _module(rule, kind, on, profile) if rule.rule_for(kind) == lib.RULE_MODULE else _special(rule, kind, on)
         notes.append(_apply(name, on, changes, profile, overrides))
     return overrides, notes
 
@@ -145,7 +145,7 @@ def _module(rule: lib.CapabilityRule, kind: str, on: bool, profile: Profile) -> 
 
 
 def _special(rule: lib.CapabilityRule, kind: str, on: bool) -> dict[str, int]:
-    if rule.rule == lib.RULE_BUILT_IN:
+    if rule.rule_for(kind) == lib.RULE_BUILT_IN:
         if not on:
             raise CapabilityError(f"capability {rule.name!r} is built into every {kind} unit and cannot be switched off")
         return {}

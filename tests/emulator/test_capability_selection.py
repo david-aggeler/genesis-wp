@@ -75,8 +75,8 @@ async def test_selection_never_touches_the_packaged_profile(start_emulator):
     ("buffer_tank", True), ("buffer_tank", False), ("pool", True), ("pool", False),
     ("active_cooling", True), ("active_cooling", False), ("passive_cooling", True),
     ("hot_gas_recovery", True), ("room_sensor", True), ("room_sensor", False),
-    ("electric_meter", True), ("electric_meter", False), ("smart_grid", True), ("additional_heater", True),
-    ("ksm", True),
+    ("electric_meter", True), ("electric_meter", False), ("smart_grid", True), ("internal_heater", True),
+    ("external_heater", True), ("ksm", True),
 ])
 async def test_every_selectable_capability_is_detected_as_selected(start_emulator, name, on):
     emu = await start_emulator(PROFILE_615, capabilities={name: on})
@@ -98,7 +98,10 @@ async def test_switched_off_modules_stay_absent_with_dynamics(start_emulator, na
     ({"heating_circuit_3": True}, "has no registers"),
     ({"ksm": False}, "built into"),
     ({"smart_grid": False}, "cannot be switched off"),
-    ({"additional_heater": False}, "cannot be switched off"),
+    ({"internal_heater": False}, "built into"),
+    ({"external_heater": False}, "cannot be switched off"),
+    ({"additional_heater": False}, "built into"),
+    ({"additional_heater": True}, "switch on one of those"),
 ])
 def test_selections_the_plant_cannot_present_are_rejected(selection, message):
     with pytest.raises(CapabilityError, match=message):
