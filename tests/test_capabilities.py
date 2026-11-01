@@ -264,3 +264,44 @@ async def test_each_capability_reports_its_rule(start_emulator, profile):
     assert capabilities["ksm"].rule == RULE_BUILT_IN
     assert capabilities["cooling"].rule == RULE_ANY_OF
     assert capabilities["hot_water"].rule == RULE_MODULE
+
+
+# DHF-REQ: genesis-wp/requirement-13  DHF-TEST: genesis-wp/ac-65
+async def test_seeded_seen_running_keeps_passive_cooling_installed_in_a_new_client(start_emulator):
+    """A consumer persists capabilities_seen and seeds the next client with it (genesis-wp-ha issue-8)."""
+    running = await start_emulator(PROFILE_615, overrides={("coils", 33): 1, ("discrete_inputs", 245): 1})
+    first = await updated_client(running)
+    assert first.capabilities_seen == frozenset({"passive_cooling"})
+    off = await start_emulator(PROFILE_615)  # coil 33 = 0, DI 245 = 0
+    fresh = await updated_client(off)
+    assert fresh.capabilities["passive_cooling"].state == UNKNOWN
+    seeded = await updated_client(off, capabilities_seen=first.capabilities_seen)
+    passive = seeded.capabilities["passive_cooling"]
+    assert (passive.state, passive.enabled, passive.overridden) == (PRESENT, False, False)
+    assert "seen running in an earlier update" in passive.evidence
+    assert seeded.capabilities["cooling"].state == PRESENT
+    assert seeded.capabilities_seen == frozenset({"passive_cooling"})
+
+
+def test_capabilities_seen_is_empty_and_read_only_by_default():
+    client = ThermiaGenesis("127.0.0.1", kind=MODEL_STIEBEL_WPE_I_071)
+    assert client.capabilities_seen == frozenset()
+    with pytest.raises(AttributeError):
+        client.capabilities_seen = frozenset({"passive_cooling"})
+
+
+def test_seeded_smart_grid_reads_as_seen_non_zero():
+    seen = {"smart_grid"}
+    smart_grid = evaluate(MODEL_STIEBEL_WPE_I_071, {}, seen=seen)["smart_grid"]
+    assert smart_grid.state == PRESENT and "seen non-zero in an earlier update" in smart_grid.evidence
+
+
+@pytest.mark.parametrize("names, message", [
+    (["sauna"], "unknown capability"),
+    (["hot_water"], "cannot be seen running"),  # module rule without a running signal
+    (["ksm"], "cannot be seen running"),  # built in
+    ("passive_cooling", "iterable of capability names"),  # a bare string is not a set of names
+])
+def test_seen_seed_rejects_names_that_cannot_be_seen(names, message):
+    with pytest.raises(ValueError, match=message):
+        ThermiaGenesis("127.0.0.1", kind=MODEL_STIEBEL_WPE_I_071, capabilities_seen=names)

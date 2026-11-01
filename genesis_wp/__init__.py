@@ -172,7 +172,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
 
     def __init__(self, host=None, port=502, kind="inverter", delay=0.1, max_registers=16, unit_id=1,
                  *, unit: ModbusUnit | None = None, timeout=DEFAULT_TIMEOUT, read_only=True,
-                 capability_overrides=None):
+                 capability_overrides=None, capabilities_seen=None):
         """Initialize."""
 
         if (host is None) == (unit is None):
@@ -190,7 +190,8 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         self._enum_raw: dict = {}  # raw values of registers decoded to a label during the last read
         self._raw: dict = {}  # raw first word of every register the last read decoded
         self._capability_overrides = _capabilities.validate_overrides(capability_overrides)
-        self._capabilities_seen: set[str] = set()
+        # Seen running in an earlier client, as persisted by the consumer (requirement-13, ac-65).
+        self._capabilities_seen: set[str] = _capabilities.validate_seen(capabilities_seen)
         self._unit = unit
         self._connection = None  # our own connection, created lazily; None for an injected unit
         self._redaction: RedactionHandle | None = None  # our host in transport log records
@@ -203,6 +204,11 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         self._kind = kind
         self._delay = delay
         self.MAX_REGISTERS = max_registers
+
+    @property
+    def capabilities_seen(self) -> frozenset[str]:
+        """Capabilities seen running so far; persist it and pass it as ``capabilities_seen`` to the next client."""
+        return frozenset(self._capabilities_seen)
 
     @property
     def read_only(self) -> bool:

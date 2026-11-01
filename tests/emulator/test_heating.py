@@ -287,3 +287,17 @@ async def test_without_a_buffer_sensor_hc2_follows_its_set_point_up_to_t33(start
     hc2 = data["input_desired_temperature_distribution_circuit_mix_valve_1"]
     assert data["input_mix_valve_1_supply_line_temperature"] == pytest.approx(
         min(hc2, data["input_system_supply_line_temperature"]), abs=0.05)
+
+
+# DHF-REQ: genesis-wp/requirement-19
+async def test_passive_cooling_selection_runs_in_auto_mode_above_the_season_start(start_emulator):
+    """How a consumer test makes discrete input 245 read 1: select passive cooling, run dynamics with
+    the captured HC2 mode auto (holding 298 = 2) and an outdoor temperature at or above holding 303."""
+    emu = await start_emulator(PROFILE_615, dynamics=True, capabilities={"passive_cooling": True})
+    start = emu.heating.holding[303]
+    emu.hold_outdoor(start + 1)
+    emu.step()
+    assert (await read_cooling(emu))["dinput_indication_when_mixing_valve_1_is_producing_passive_cooling"]
+    emu.hold_outdoor(start - 1)
+    emu.step()
+    assert not (await read_cooling(emu))["dinput_indication_when_mixing_valve_1_is_producing_passive_cooling"]
