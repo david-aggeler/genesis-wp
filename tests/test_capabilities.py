@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 
 from genesis_wp import ABSENT, PRESENT, UNKNOWN, ThermiaGenesis
-from genesis_wp.capabilities import STATES
-from genesis_wp.const import MODEL_STIEBEL_WPE_I_071, REGISTERS
+from genesis_wp.capabilities import (
+    CAPABILITY_RULES, RULE_ANY_OF, RULE_ANY_SET, RULE_BUILT_IN, RULE_MODULE, STATES, evaluate, gated_registers,
+)
+from genesis_wp.const import MODEL_CALIBRA_RXT, MODEL_INVERTER, MODEL_MEGA, MODEL_STIEBEL_WPE_I_071, REGISTERS
 
 from .harness import PROFILE_615, PROFILES
 
@@ -121,10 +123,12 @@ async def test_captured_plant_capabilities(start_emulator):
     """The owner's plant as captured (formal_review-1)."""
     emu = await start_emulator(PROFILE_615)
     states = {name: cap.state for name, cap in (await updated_client(emu)).capabilities.items()}
-    assert {n for n, s in states.items() if s == PRESENT} == {"heating_circuit_2", "buffer_tank", "ksm"}
+    assert {n for n, s in states.items() if s == PRESENT} == {
+        "heating_circuit_2", "buffer_tank", "ksm", "internal_heater", "additional_heater",
+    }
     # Switched off without a sensor that proves absence: unknown, not absent (design_decision-2, 2026-10-27)
     assert {n for n, s in states.items() if s == UNKNOWN} == {
-        "smart_grid", "additional_heater", "passive_cooling", "hot_gas_recovery", "cooling",
+        "smart_grid", "external_heater", "passive_cooling", "hot_gas_recovery", "cooling",
     }
     for name in ("hot_water", "pool", "active_cooling", "room_sensor", "electric_meter"):
         assert states[name] == ABSENT, name
@@ -212,3 +216,51 @@ async def test_cooling_unknown_when_a_member_is_unknown(start_emulator):
     emu = await start_emulator(PROFILE_615)
     client = await updated_client(emu, capability_overrides={"passive_cooling": UNKNOWN})
     assert client.capabilities["cooling"].state == UNKNOWN
+
+
+HEATERS = ("internal_heater", "external_heater")
+ALL_MODELS = (MODEL_MEGA, MODEL_INVERTER, MODEL_CALIBRA_RXT, MODEL_STIEBEL_WPE_I_071)
+
+
+def _gates(name, kind):
+    return set(gated_registers(next(r for r in CAPABILITY_RULES if r.name == name), kind))
+
+
+# DHF-REQ: genesis-wp/requirement-13
+@pytest.mark.parametrize("kind", ALL_MODELS)
+def test_heater_members_gate_disjoint_registers_and_the_parent_only_their_union(kind):
+    internal, external = (_gates(name, kind) for name in HEATERS)
+    assert internal and external, kind
+    assert not internal & external
+    assert _gates("additional_heater", kind) == internal | external
+    others = set().union(*(_gates(r.name, kind) for r in CAPABILITY_RULES if r.name not in (*HEATERS, "additional_heater")))
+    assert not (internal | external) & others
+    assert all("external" not in name for name in internal)
+
+
+# DHF-REQ: genesis-wp/requirement-13
+def test_internal_heater_is_built_into_the_wpe_i_only():
+    wpe = evaluate(MODEL_STIEBEL_WPE_I_071, {})
+    assert wpe["internal_heater"].state == PRESENT and wpe["internal_heater"].rule == RULE_BUILT_IN
+    assert wpe["external_heater"].state == UNKNOWN and wpe["external_heater"].rule == RULE_MODULE
+    assert wpe["additional_heater"].state == PRESENT and wpe["additional_heater"].rule == RULE_ANY_OF
+    mega = evaluate(MODEL_MEGA, {})
+    assert mega["internal_heater"].state == UNKNOWN and mega["internal_heater"].rule == RULE_ANY_SET
+    assert evaluate(MODEL_INVERTER, {"coil_enable_internal_additional_heater": True})["internal_heater"].state == PRESENT
+
+
+# DHF-REQ: genesis-wp/requirement-13
+def test_external_heater_follows_its_enable_coil():
+    on = evaluate(MODEL_STIEBEL_WPE_I_071, {"coil_enable_external_additional_heater": True})["external_heater"]
+    assert on.state == PRESENT and on.enabled is True
+    off = evaluate(MODEL_STIEBEL_WPE_I_071, {"coil_enable_external_additional_heater": False})["external_heater"]
+    assert off.state == UNKNOWN and off.enabled is False  # switched off, not missing (design_decision-2)
+
+
+@pytest.mark.parametrize("profile", PROFILES)
+async def test_each_capability_reports_its_rule(start_emulator, profile):
+    emu = await start_emulator(profile)
+    capabilities = (await updated_client(emu)).capabilities
+    assert capabilities["ksm"].rule == RULE_BUILT_IN
+    assert capabilities["cooling"].rule == RULE_ANY_OF
+    assert capabilities["hot_water"].rule == RULE_MODULE
