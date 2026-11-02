@@ -112,9 +112,15 @@ class Snapshot:
     firmware: str | None
 
 
-async def read_snapshot(target: str, host: str, port: int, *, delay: float = 0.1) -> Snapshot:
-    """Run one full WPE-I update through a read-only unit."""
-    unit = ReadOnlyUnit(host, port)
+async def read_snapshot(
+    target: str, host: str, port: int, *, delay: float = 0.1, timeout: float = 5.0
+) -> Snapshot:
+    """Run one full WPE-I update through a read-only unit.
+
+    The injected unit owns the transport timeout. Emulator targets pass the harness's
+    TEST_CLIENT_TIMEOUT (requirement-36); the live target keeps the production 5 s.
+    """
+    unit = ReadOnlyUnit(host, port, timeout=timeout)
     client = ThermiaGenesis(kind=WPE_I_KIND, unit=unit, delay=delay, max_registers=16)
     try:
         data = await client.async_update()

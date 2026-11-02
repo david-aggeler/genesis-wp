@@ -177,7 +177,7 @@ async def _take_snapshot(target: str) -> Snapshot:
     emu = Emulator(get_profile(target), port=0)
     await emu.start()
     try:
-        return await read_snapshot(target, emu.host, emu.port, delay=0)
+        return await read_snapshot(target, emu.host, emu.port, delay=0, timeout=TEST_CLIENT_TIMEOUT)
     finally:
         await emu.stop()
 
