@@ -158,6 +158,9 @@ _LEGACY_STATUS_LABELS = {
     6: "Pool", 7: "Anti legionella", 98: "Standby", 99: "No demand",
 }
 
+_WORD_BLOCKS = {REG_COIL: "coils", REG_DISCRETE_INPUT: "discrete_inputs",
+                REG_INPUT: "input_registers", REG_HOLDING: "holding_registers"}
+
 _READ_METHODS = {
     REG_COIL: "read_coils",
     REG_DISCRETE_INPUT: "read_discrete_inputs",
@@ -196,6 +199,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         self.capabilities: dict[str, Capability] = {}
         self.labels: dict[str, EnumValue] = {}
         self._enum_raw: dict = {}  # raw values of registers decoded to a label during the last read
+        self.last_words: dict = {}  # block -> address -> word from the last update
         self._raw: dict = {}  # raw first word of every register the last read decoded
         self._capability_overrides = _capabilities.validate_overrides(capability_overrides)
         # Seen running in an earlier client, as persisted by the consumer (requirement-13, ac-65).
@@ -283,6 +287,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         self, register_types=REG_TYPES, only_registers=None
     ):  # pylint:disable=too-many-branches
         """Update data from heat pump."""
+        self.last_words = {block: {} for block in _WORD_BLOCKS.values()}
         await self._ensure_unit()
         if only_registers is None:
             only_registers = [name for name, meta in REGISTERS.items() if meta[self._kind]]
@@ -307,9 +312,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             for i, (name, val) in enumerate(raw_data.items()):
                 data[name] = val
 
-            version_attrs = (ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MAJOR, ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MINOR, ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MICRO) if self._kind in GENESIS_17_MODELS else (ATTR_INPUT_SOFTWARE_VERSION_MAJOR, ATTR_INPUT_SOFTWARE_VERSION_MINOR, ATTR_INPUT_SOFTWARE_VERSION_MICRO)
-            if all(attr in data for attr in version_attrs):
-                self.firmware = '.'.join(str(data[attr]) for attr in version_attrs)
+            self._update_firmware(data)
 
             _LOGGER.debug("------------- REGISTERS ----------------------")
             for i, (name, val) in enumerate(self.data.items()):
@@ -331,20 +334,27 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         )
         return data
 
+    def _update_firmware(self, data):
+        """Update firmware only when all model-specific version fields are present."""
+        if self._kind in GENESIS_17_MODELS:
+            attrs = (
+                ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MAJOR,
+                ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MINOR,
+                ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MICRO,
+            )
+        else:
+            attrs = (
+                ATTR_INPUT_SOFTWARE_VERSION_MAJOR,
+                ATTR_INPUT_SOFTWARE_VERSION_MINOR,
+                ATTR_INPUT_SOFTWARE_VERSION_MICRO,
+            )
+        if all(attr in data for attr in attrs):
+            self.firmware = '.'.join(str(data[attr]) for attr in attrs)
+
     # DHF-REQ: genesis-wp/requirement-29
     def _apply_valid_when(self, values) -> None:
         """None for a register whose declared selector is not in this read or reads another raw value."""
-        for name in values:
-            condition = REGISTERS[name].get(KEY_VALID_WHEN, {}).get(self._kind)
-            if condition is None or values[name] is None:
-                continue
-            selector, required = condition
-            raw = self._raw.get(selector)
-            if raw == required:
-                continue
-            reason = "not in this update" if raw is None else f"reads {raw}, not {required}"
-            _LOGGER.debug("%s reported as None: selector %s %s", name, selector, reason)
-            values[name] = None
+        apply_valid_when(values, self._raw, self._kind)
 
     def _decode_labels(self, data) -> dict[str, EnumValue]:
         labels = {}
@@ -546,28 +556,20 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         if not read_data:
             self._chunk_unread(chunk, length, "empty response")
             return
+        # DHF-REQ: genesis-wp/requirement-40
+        self.last_words.setdefault(_WORD_BLOCKS[regtype], {}).update(
+            {start_address + i: int(word) for i, word in enumerate(read_data[:length])}
+        )
         for name, offset in chunk["slots"].items():
             self._raw[name] = read_data[offset]
             raw_data[name] = self._decode(name, read_data, offset)
 
     def _decode(self, name, words, offset):
-        """Decode one register from its chunk's words, driven by its register fields."""
+        """Decode through the same pure function used for offline recordings."""
         info = REGISTERS[name]
-        val = words[offset]
-        not_fitted = info.get(KEY_NOT_FITTED, {}).get(self._kind)
-        if not_fitted is not None and val == not_fitted:
-            return None  # sensor not fitted
-        datatype = info[KEY_DATATYPE]
-        if datatype == TYPE_STATUS:
-            val = self._decode_status(name, info, val)
-        elif datatype in _WORD_DECODERS:
-            val = _WORD_DECODERS[datatype](words, offset)
-        scale = info[KEY_SCALE]
-        if scale != 1:
-            val = val / scale
-            if info.get(KEY_KIND, {}).get(self._kind) == KIND_COUNT:
-                val = self._count_value(name, val)
-        return val
+        if info[KEY_DATATYPE] == TYPE_STATUS and info.get(KEY_ENUM, {}).get(self._kind) is not None:
+            self._enum_raw[name] = words[offset]
+        return decode_register(name, words, offset, self._kind)
 
     # DHF-REQ: genesis-wp/requirement-35
     @staticmethod
@@ -578,14 +580,6 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         _LOGGER.debug("Count register %s decoded to non-integral %s; kept as float", name, val)
         return val
 
-    def _decode_status(self, name, info, val):
-        table = info.get(KEY_ENUM, {}).get(self._kind)
-        if table is None:
-            return _LEGACY_STATUS_LABELS.get(val, "OFF")
-        # Documented demand values (issue-10); an undocumented one stays raw.
-        self._enum_raw[name] = val
-        return table.get(val, val)
-
     def _chunk_unread(self, chunk, length, reason):
         """Record a chunk's registers as unread; their values stay absent, never stale."""
         names = list(chunk["slots"])
@@ -595,3 +589,44 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             chunk[KEY_REG_TYPE], chunk["start"], chunk["start"] + length - 1, reason, len(names), ", ".join(names),
         )
 
+# DHF-REQ: genesis-wp/requirement-42
+def decode_register(name, words, offset, model, registers=REGISTERS):
+    """Decode one register from its chunk's words, driven by its register fields."""
+    info = registers[name]
+    val = words[offset]
+    not_fitted = info.get(KEY_NOT_FITTED, {}).get(model)
+    if not_fitted is not None and val == not_fitted:
+        return None  # sensor not fitted
+    datatype = info[KEY_DATATYPE]
+    if datatype == TYPE_STATUS:
+        val = _decode_status_value(info, val, model)
+    elif datatype in _WORD_DECODERS:
+        val = _WORD_DECODERS[datatype](words, offset)
+    scale = info[KEY_SCALE]
+    if scale != 1:
+        val = val / scale
+        if info.get(KEY_KIND, {}).get(model) == KIND_COUNT:
+            val = ThermiaGenesis._count_value(name, val)
+    return val
+
+
+def _decode_status_value(info, val, model):
+    table = info.get(KEY_ENUM, {}).get(model)
+    if table is None:
+        return _LEGACY_STATUS_LABELS.get(val, "OFF")
+    return table.get(val, val)
+
+
+def apply_valid_when(values, raw_words, model, registers=REGISTERS):
+    """Apply the same selector validity contract to live and offline values."""
+    for name in values:
+        condition = registers[name].get(KEY_VALID_WHEN, {}).get(model)
+        if condition is None or values[name] is None:
+            continue
+        selector, required = condition
+        raw = raw_words.get(selector)
+        if raw == required:
+            continue
+        reason = "not in this update" if raw is None else f"reads {raw}, not {required}"
+        _LOGGER.debug("%s reported as None: selector %s %s", name, selector, reason)
+        values[name] = None
