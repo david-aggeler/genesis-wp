@@ -5,10 +5,16 @@ Write paths run only against the emulator or the mock unit, never the real devic
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 
-from genesis_wp import GenesisInvalidWriteError, ThermiaException, ThermiaGenesis
+from genesis_wp import (
+    GenesisInvalidWriteError, GenesisNotWritableError, GenesisReadOnlyError,
+    ThermiaException, ThermiaGenesis,
+)
 from genesis_wp.const import (
+    ATTR_INPUT_OUTDOOR_TEMPERATURE,
     ATTR_COIL_ENABLE_TAP_WATER,
     ATTR_COIL_ENABLE_TWC,
     ATTR_HOLDING_COMFORT_WHEEL_SETTING,
@@ -144,3 +150,48 @@ async def test_unknown_register_name_raises_a_library_exception(mock_modbus_unit
 @pytest.mark.parametrize(("register", "value"), [(ATTR_COIL_ENABLE_TWC, 1), (ATTR_HOLDING_TWC_MIX_VALVE_SET_POINT, 21)])
 async def test_register_not_defined_for_the_model_is_refused(mock_modbus_unit, register, value):
     await _assert_refused(mock_modbus_unit, register, value)
+
+
+# DHF-TEST: genesis-wp/requirement-38  DHF-TEST: genesis-wp/ac-151
+@pytest.mark.parametrize(
+    ("read_only", "register", "value", "error"),
+    [(True, INT_SCALE_100, 1, GenesisReadOnlyError),
+     (False, ATTR_INPUT_OUTDOOR_TEMPERATURE, 1, GenesisNotWritableError),
+     (False, INT_SCALE_100, 1.153, GenesisInvalidWriteError),
+     (False, COIL, 2, GenesisInvalidWriteError),
+     (False, INT_SCALE_100, None, GenesisInvalidWriteError),
+     (False, INT_SCALE_100, 1e308, GenesisInvalidWriteError),
+     (False, INT_SCALE_100, 400, GenesisInvalidWriteError),
+     (False, "holding_typo", 1, GenesisInvalidWriteError),
+     (False, ATTR_COIL_ENABLE_TWC, 1, GenesisInvalidWriteError)],
+)
+async def test_refused_write_logs_one_warning(mock_modbus_unit, caplog, read_only, register, value, error):
+    writes = []
+    mock_modbus_unit.on_write(writes.append)
+    client = ThermiaGenesis(unit=mock_modbus_unit, kind=WPE_I_KIND, delay=0, read_only=read_only)
+    with caplog.at_level(logging.WARNING, logger="genesis_wp"):
+        with pytest.raises(error) as info:
+            await client.async_set(register, value)
+    records = [record for record in caplog.records if record.name == "genesis_wp"]
+    assert len(records) == 1
+    assert records[0].levelno == logging.WARNING
+    assert register in records[0].getMessage()
+    assert records[0].getMessage() == str(info.value)
+    assert not mock_modbus_unit.connected
+    assert mock_modbus_unit.read_events == []
+    assert writes == []
+
+
+# DHF-TEST: genesis-wp/requirement-33  DHF-TEST: genesis-wp/ac-152
+async def test_value_inside_scale_tolerance_writes_115(mock_modbus_unit):
+    writes = []
+    mock_modbus_unit.on_write(writes.append)
+    await _writer(mock_modbus_unit).async_set(INT_SCALE_100, 1.15 + 1e-9)
+    assert [(w.function_code, w.address, list(w.values)) for w in writes] == [
+        (6, REGISTERS[INT_SCALE_100][KEY_ADDRESS], [115])
+    ]
+
+
+# DHF-TEST: genesis-wp/requirement-33  DHF-TEST: genesis-wp/ac-152
+async def test_value_outside_scale_tolerance_is_refused(mock_modbus_unit):
+    await _assert_refused(mock_modbus_unit, INT_SCALE_100, 1.15 + 1e-5)
