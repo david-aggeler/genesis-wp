@@ -105,3 +105,90 @@ async def test_failure_continues(start_emulator, tmp_path):
     assert entries[2]['error'] == 'ThermiaConnectionError'
     assert entries[2]['ts']
     assert entries[-1]['samples'] == 2 and entries[-1]['failures'] == 1
+
+
+# DHF-TEST: genesis-wp/requirement-41 genesis-wp/ac-162 genesis-wp/ac-164
+async def test_read_only_host_free_run(start_emulator, tmp_path, caplog):
+    from genesis_wp.profiler import profile
+    emu = await start_emulator(PROFILE_615)
+
+    class OutageClock(Clock):
+        async def sleep(self, seconds):
+            await super().sleep(seconds)
+            if self.seconds == 60:
+                await emu.stop()
+            elif self.seconds == 120:
+                await emu.start()
+
+    caplog.set_level('DEBUG')
+    path = tmp_path / 'safe.jsonl'
+    await profile('localhost', port=emu.port, model=WPE_I_KIND, interval=60,
+                  samples=3, output=path, clock=OutageClock())
+    assert [e['type'] for e in lines(path)] == ['header', 'sample', 'failure', 'sample', 'trailer']
+    assert emu.requests and all(r.function_code in (1, 2, 3, 4) for r in emu.requests)
+    assert not emu.writes
+    assert 'localhost' not in path.read_text()
+    for record in caplog.records:
+        assert 'localhost' not in str(record.msg)
+        assert 'localhost' not in str(record.args)
+
+
+# DHF-TEST: genesis-wp/requirement-41 genesis-wp/ac-163
+async def test_no_write_opt_in(start_emulator, tmp_path, monkeypatch):
+    from genesis_wp import ThermiaGenesis
+    from genesis_wp.profiler import profile
+    emu = await start_emulator(PROFILE_615)
+    kwargs = dict(port=emu.port, model=WPE_I_KIND, interval=60, samples=1,
+                  output=tmp_path / 'readonly.jsonl', clock=Clock())
+    with pytest.raises(TypeError):
+        await profile(emu.host, read_only=False, **kwargs)
+    assert not emu.requests
+    update = ThermiaGenesis.async_update
+    observed = []
+
+    async def check_read_only(self):
+        observed.append(self.read_only)
+        return await update(self)
+
+    monkeypatch.setattr(ThermiaGenesis, 'async_update', check_read_only)
+    await profile(emu.host, **kwargs)
+    assert observed == [True]
+
+
+@pytest.mark.parametrize('options', [dict(interval=0, samples=1),
+    dict(interval=float('nan'), samples=1), dict(interval=60),
+    dict(interval=60, samples=1, duration=60), dict(interval=60, samples=1.5),
+    dict(interval=60, samples=True), dict(interval=60, duration=-1)])
+async def test_invalid_arguments_before_connect(tmp_path, options):
+    from genesis_wp.profiler import profile
+    with pytest.raises(ValueError):
+        await profile('localhost', model=WPE_I_KIND, output=tmp_path / 'invalid', **options)
+    assert not (tmp_path / 'invalid').exists()
+
+
+async def test_initial_failure_and_append(start_emulator, tmp_path, monkeypatch):
+    from genesis_wp import ThermiaGenesis
+    from genesis_wp.profiler import profile
+    emu = await start_emulator(PROFILE_615)
+    update = ThermiaGenesis.async_update
+    attempts = 0
+
+    async def unavailable_first(self):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise OSError('private target detail')
+        return await update(self)
+
+    monkeypatch.setattr(ThermiaGenesis, 'async_update', unavailable_first)
+    path = tmp_path / 'append.jsonl'
+    kwargs = dict(port=emu.port, model=WPE_I_KIND, interval=60, output=path, clock=Clock())
+    await profile(emu.host, samples=2, **kwargs)
+    entries = lines(path)
+    assert entries[0]['firmware'] is None
+    assert entries[1]['error'] == 'OSError'
+    assert 'private target detail' not in path.read_text()
+    assert entries[2]['type'] == 'sample'
+    await profile(emu.host, duration=1, **kwargs)
+    assert [e['type'] for e in lines(path)[4:]] == ['header', 'trailer']
+    assert lines(path)[-1]['samples'] == 0
