@@ -51,19 +51,28 @@ async def test_changed_scale(start_emulator, tmp_path):
 
 
 # DHF-TEST: genesis-wp/requirement-42 genesis-wp/ac-167
-async def test_compare_changed_samples(start_emulator, tmp_path):
+async def test_compare_changed_samples(start_emulator, tmp_path, monkeypatch):
     from genesis_wp.profiler import profile, load_recording, compare_with_profile
+    from genesis_wp.emulator import Emulator
+    action = Emulator._action
+    changed = False
+
+    async def changed_words(self, fc, start, address, count, registers, values):
+        await action(self, fc, start, address, count, registers, values)
+        if changed:
+            for code, target, word in [(4, 30, 100), (3, 5, 215)]:
+                if fc == code and address <= target < address + count:
+                    registers[target - start] = word
+
+    monkeypatch.setattr(Emulator, '_action', changed_words)
     emu = await start_emulator(PROFILE_615)
     original = emu.profile
 
     class ChangeClock(Clock):
         async def sleep(self, seconds):
+            nonlocal changed
             await super().sleep(seconds)
-            if self.seconds == 60:
-                await emu.stop()
-                emu.profile = original.with_overrides({('input_registers', 30): 100,
-                                                       ('holding_registers', 5): 215})
-                await emu.start()
+            changed = self.seconds >= 60
 
     path = tmp_path / 'diff.jsonl'
     await profile(emu.host, port=emu.port, model=WPE_I_KIND, interval=60,
