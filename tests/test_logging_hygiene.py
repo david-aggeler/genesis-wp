@@ -14,7 +14,7 @@ import pytest
 from genesis_wp import ThermiaConnectionError, ThermiaGenesis, redact_transport_host
 from genesis_wp.const import ATTR_HOLDING_COMFORT_WHEEL_SETTING
 
-from .harness import PROFILE_615, WPE_I_KIND
+from .harness import PROFILE_615, WPE_I_KIND, emulator_client
 from .test_transport import FIRMWARE, _closed_port
 
 pytestmark = pytest.mark.writes
@@ -66,7 +66,7 @@ def debug_caplog(caplog):
 @pytest.mark.parametrize("host", HOSTS)
 async def test_update_then_lost_connection(start_emulator, debug_caplog, capsys, host):
     emu = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis(host, port=emu.port, kind=WPE_I_KIND, delay=0, timeout=1)
+    client = emulator_client(host, port=emu.port, kind=WPE_I_KIND, delay=0)
     try:
         assert await client.async_update()
         await emu.stop()
@@ -84,6 +84,7 @@ async def test_update_then_lost_connection(start_emulator, debug_caplog, capsys,
 # DHF-REQ: genesis-wp/requirement-9  DHF-TEST: genesis-wp/ac-26
 @pytest.mark.parametrize("host", HOSTS)
 async def test_unreachable_host(debug_caplog, capsys, host):
+    # Keep connection-failure logging checks bounded against a closed port.
     client = ThermiaGenesis(host, port=_closed_port(), kind=WPE_I_KIND, delay=0, timeout=1)
     with pytest.raises(ThermiaConnectionError) as info:
         await client.async_update(only_registers=FIRMWARE)
@@ -107,7 +108,7 @@ def _assert_logged_without_stdout(caplog, capsys):
 # DHF-REQ: genesis-wp/requirement-9  DHF-TEST: genesis-wp/ac-27
 async def test_unexpected_read_error_is_logged_not_printed(start_emulator, debug_caplog, capsys, monkeypatch):
     emu = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
     try:
         unit = await client._ensure_unit()
 
@@ -124,7 +125,7 @@ async def test_unexpected_read_error_is_logged_not_printed(start_emulator, debug
 # DHF-REQ: genesis-wp/requirement-9  DHF-TEST: genesis-wp/ac-27
 async def test_unexpected_write_error_is_logged_not_printed(start_emulator, debug_caplog, capsys, monkeypatch):
     emu = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, read_only=False)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, read_only=False)
     try:
         unit = await client._ensure_unit()
 
@@ -147,6 +148,7 @@ def _transport_records(caplog, level):
 # DHF-REQ: genesis-wp/requirement-9  DHF-TEST: genesis-wp/ac-100
 @pytest.mark.parametrize("host", HOSTS)
 async def test_failed_connect_warning_is_redacted_not_dropped(debug_caplog, host):
+    # Keep connection-failure logging checks bounded against a closed port.
     client = ThermiaGenesis(host, port=_closed_port(), kind=WPE_I_KIND, delay=0, timeout=1)
     with pytest.raises(ThermiaConnectionError):
         await client.async_update(only_registers=FIRMWARE)
@@ -160,7 +162,7 @@ async def test_failed_connect_warning_is_redacted_not_dropped(debug_caplog, host
 # DHF-REQ: genesis-wp/requirement-9  DHF-TEST: genesis-wp/ac-100
 async def test_connect_debug_record_is_redacted(start_emulator, debug_caplog):
     emu = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, timeout=1)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
     try:
         assert await client.async_update(only_registers=FIRMWARE)
     finally:
@@ -202,7 +204,7 @@ def test_redaction_covers_args_and_exception_text(caplog):
 
 async def test_two_clients_redact_their_own_hosts(start_emulator, debug_caplog):
     emu = await start_emulator(PROFILE_615)
-    clients = [ThermiaGenesis(host, port=emu.port, kind=WPE_I_KIND, delay=0, timeout=1) for host in HOSTS]
+    clients = [emulator_client(host, port=emu.port, kind=WPE_I_KIND, delay=0) for host in HOSTS]
     try:
         for client in clients:
             assert await client.async_update(only_registers=FIRMWARE)

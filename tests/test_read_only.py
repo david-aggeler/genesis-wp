@@ -15,7 +15,7 @@ from genesis_wp.const import (
     MODEL_STIEBEL_WPE_I_071,
 )
 
-from .harness import PROFILE_615, WPE_I_KIND, library_full_update
+from .harness import PROFILE_615, WPE_I_KIND, library_full_update, emulator_client
 
 pytestmark = pytest.mark.writes
 
@@ -29,7 +29,7 @@ WRITABLE = sorted(
 @pytest.mark.parametrize("register", [ATTR_COIL_ENABLE_TAP_WATER, ATTR_HOLDING_COMFORT_WHEEL_SETTING])
 async def test_default_client_refuses_a_write_before_sending(start_emulator, register):
     emu = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
     with pytest.raises(GenesisReadOnlyError):
         await client.async_set(register, 1)
     await client.close()
@@ -61,7 +61,7 @@ async def test_full_update_sends_only_read_function_codes(start_emulator):
 # DHF-REQ: genesis-wp/requirement-1  DHF-TEST: genesis-wp/ac-3
 async def test_explicit_opt_in_lets_a_write_through(start_emulator):
     emu = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, read_only=False)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, read_only=False)
     await client.async_set(ATTR_HOLDING_COMFORT_WHEEL_SETTING, 21)
     await client.close()
     assert [(w.function_code, w.address, w.values, w.rejected) for w in emu.writes] == [

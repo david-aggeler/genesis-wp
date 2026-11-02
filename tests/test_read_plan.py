@@ -27,7 +27,7 @@ from genesis_wp.const import (
 )
 from genesis_wp.emulator import ProfileError, get_profile
 
-from .harness import PROFILE_615, PROFILES, WPE_I_KIND, decode_raw
+from .harness import PROFILE_615, PROFILES, WPE_I_KIND, decode_raw, emulator_client
 
 pytestmark = pytest.mark.fixture
 
@@ -41,7 +41,7 @@ GATED = (REG_HOLDING, 116)  # read alone, only while coil 41 is on
 
 
 def _client(emu) -> ThermiaGenesis:
-    return ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, max_registers=16)
+    return emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, max_registers=16)
 
 
 def _covers_116(request) -> bool:

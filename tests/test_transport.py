@@ -11,7 +11,7 @@ from modbus_connection.pymodbus import ModbusConnection
 
 from genesis_wp import ThermiaConnectionError, ThermiaGenesis
 
-from .harness import PROFILE_615, UNIT, WPE_I_KIND, expected_library_values, library_full_update
+from .harness import PROFILE_615, UNIT, WPE_I_KIND, expected_library_values, library_full_update, TEST_CLIENT_TIMEOUT, emulator_client
 
 pytestmark = pytest.mark.fixture
 
@@ -28,7 +28,7 @@ async def test_full_update_does_not_block_the_event_loop(start_emulator, caplog)
     try:
         with caplog.at_level(logging.WARNING, logger="asyncio"):
             # delay=0 so the update is pure I/O; the inherited 0.1 s delay is an await, not a block.
-            client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
+            client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
             await client.async_update()
             await client.close()
     finally:
@@ -41,16 +41,16 @@ async def test_full_update_does_not_block_the_event_loop(start_emulator, caplog)
 # DHF-REQ: genesis-wp/requirement-2  DHF-TEST: genesis-wp/ac-6
 async def test_upper_case_hostname_is_accepted(start_emulator):
     emu = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis("LOCALHOST", port=emu.port, kind=WPE_I_KIND, delay=0)
+    client = emulator_client("LOCALHOST", port=emu.port, kind=WPE_I_KIND, delay=0)
     data = await client.async_update(only_registers=FIRMWARE)
     await client.close()
     assert [data[name] for name in FIRMWARE] == [6, 1, 5]
 
 
 # DHF-REQ: genesis-wp/requirement-2  DHF-TEST: genesis-wp/ac-24
-async def test_client_runs_on_an_injected_unit(start_emulator):
+async def emulator_client_runs_on_an_injected_unit(start_emulator):
     emu = await start_emulator(PROFILE_615)
-    connection = ModbusConnection(ModbusTcpParams(host=emu.host, port=emu.port))
+    connection = ModbusConnection(ModbusTcpParams(host=emu.host, port=emu.port), timeout=TEST_CLIENT_TIMEOUT)
     await connection.connect()
     try:
         client = ThermiaGenesis(unit=connection.for_unit(UNIT), kind=WPE_I_KIND, delay=0, max_registers=16)
@@ -81,6 +81,7 @@ async def test_reads_through_a_mock_unit(mock_modbus_unit):
 
 async def test_unreachable_host_raises_connection_error():
     port = _closed_port()
+    # A short timeout bounds this test of an unreachable endpoint.
     client = ThermiaGenesis("127.0.0.1", port=port, kind=WPE_I_KIND, delay=0, timeout=1)
     with pytest.raises(ThermiaConnectionError):
         await client.async_update(only_registers=FIRMWARE)

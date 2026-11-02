@@ -23,7 +23,7 @@ from pymodbus.client import AsyncModbusTcpClient
 
 from genesis_wp.emulator import Emulator, get_profile
 
-from .harness import PROFILE_615, PROFILES
+from .harness import PROFILE_615, PROFILES, TEST_CLIENT_TIMEOUT
 from .plant import Snapshot, read_snapshot
 from .targets import LIVE, TargetError, selected
 
@@ -222,7 +222,7 @@ async def connect() -> AsyncIterator[Callable[[Emulator], AsyncModbusTcpClient]]
     clients: list[AsyncModbusTcpClient] = []
 
     async def open_client(emu: Emulator) -> AsyncModbusTcpClient:
-        client = AsyncModbusTcpClient(emu.host, port=emu.port, timeout=2, retries=0)
+        client = AsyncModbusTcpClient(emu.host, port=emu.port, timeout=TEST_CLIENT_TIMEOUT, retries=0)
         assert await client.connect()
         clients.append(client)
         return client

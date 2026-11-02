@@ -7,18 +7,18 @@ from importlib import resources
 
 import pytest
 
-from genesis_wp import ABSENT, PRESENT, UNKNOWN, ThermiaGenesis
+from genesis_wp import ABSENT, PRESENT, UNKNOWN
 from genesis_wp.emulator import Emulator, get_profile
 from genesis_wp.emulator.capabilities import CapabilityError, parse_selection
 from genesis_wp.emulator.cli import main
 
-from ..harness import PROFILE_615
+from ..harness import PROFILE_615, emulator_client
 
 pytestmark = pytest.mark.emulator
 
 
 async def detected(emu):
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
+    client = emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
     try:
         await client.async_update()
     finally:
