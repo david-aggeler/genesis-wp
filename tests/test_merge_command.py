@@ -317,6 +317,69 @@ def test_a_main_tag_does_not_refuse_the_merge(repo):
     _assert_merged(repo, _run_merge(repo, tip), main_before, tip)
 
 
+# ---- the push of main to its upstream (requirement-39) -----------------------------------
+
+
+def _track_upstream(repo: Path, tmp_path: Path) -> Path:
+    """A bare ``origin`` in tmp_path holding main as ``master``, with main tracking it."""
+    origin = tmp_path / "origin.git"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "master", str(origin))
+    _git(repo, "remote", "add", "origin", str(origin))
+    _git(repo, "push", "-q", "origin", "main:master")
+    _git(repo, "config", "branch.main.remote", "origin")
+    _git(repo, "config", "branch.main.merge", "refs/heads/master")
+    return origin
+
+
+# DHF-REQ: genesis-wp/requirement-39  DHF-TEST: genesis-wp/ac-153
+def test_merge_pushes_main_to_its_upstream(repo, tmp_path):
+    origin = _track_upstream(repo, tmp_path)
+    done = _run_merge(repo, "cr-7")
+    merged = _git(repo, "rev-parse", "refs/heads/main")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == f"code_change_ref={merged}\n"
+    assert _git(origin, "rev-parse", "refs/heads/master") == merged
+
+
+# DHF-REQ: genesis-wp/requirement-39  DHF-TEST: genesis-wp/ac-154
+def test_a_rejected_push_keeps_the_merge_and_reports_it(repo, tmp_path):
+    origin = _track_upstream(repo, tmp_path)
+    other = tmp_path / "other"
+    _git(tmp_path, "clone", "-q", "-b", "master", str(origin), str(other))
+    _commit(other, "elsewhere")
+    _git(other, "push", "-q", "origin", "master")
+    remote_before = _git(origin, "rev-parse", "refs/heads/master")
+    main_before, tip = _git(repo, "rev-parse", "refs/heads/main"), _git(repo, "rev-parse", "refs/heads/cr-7")
+    done = _run_merge(repo, "cr-7")
+    _assert_merged(repo, done, main_before, tip)
+    assert done.stdout == f"code_change_ref={_git(repo, 'rev-parse', 'refs/heads/main')}\n"
+    assert "merge_unit: push of main to origin refs/heads/master failed" in done.stderr
+    assert _git(origin, "rev-parse", "refs/heads/master") == remote_before
+
+
+# DHF-REQ: genesis-wp/requirement-39  DHF-TEST: genesis-wp/ac-155
+def test_no_upstream_skips_the_push(repo):
+    done = _run_merge(repo, "cr-7")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == f"code_change_ref={_git(repo, 'rev-parse', 'refs/heads/main')}\n"
+    assert "merge_unit: main has no upstream, push skipped" in done.stderr
+
+
+# DHF-REQ: genesis-wp/requirement-39  DHF-TEST: genesis-wp/ac-156
+@pytest.mark.parametrize("refusal", ["dirty", "hook"])
+def test_a_refused_merge_pushes_nothing(repo, tmp_path, refusal):
+    origin = _track_upstream(repo, tmp_path)
+    if refusal == "dirty":
+        (repo / "base").write_text("changed\n")
+        reason = "tracked changes"
+    else:
+        _hook(repo, "prepare-commit-msg", 'printf "rewritten\\n" > "$1"\n')
+        reason = "subject is 'rewritten'"
+    remote_before = _git(origin, "rev-parse", "refs/heads/master")
+    _assert_refused(repo, _run_merge(repo, "cr-7"), _git(repo, "rev-parse", "main"), reason)
+    assert _git(origin, "rev-parse", "refs/heads/master") == remote_before
+
+
 # ---- the fixture stays inside tmp_path ---------------------------------------------------
 
 

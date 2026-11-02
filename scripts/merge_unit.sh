@@ -8,9 +8,11 @@
 # revert, am, rebase, sequencer or bisect already in progress, dirty tracked tree, argument
 # that resolves to no single cr-<n> branch, nothing ahead of main, merge failure, a merge
 # commit whose subject or parents a hook changed. Branches are resolved by full refname, so
-# a tag named main or cr-<n> changes nothing.
+# a tag named main or cr-<n> changes nothing. After a merge it pushes main to the branch main
+# tracks (origin master); a refusal pushes nothing.
 #
 # DHF-REQ: genesis-wp/requirement-34
+# DHF-REQ: genesis-wp/requirement-39
 set -euo pipefail
 
 MAIN=main
@@ -76,3 +78,14 @@ if [ -n "$problem" ]; then
 fi
 
 printf 'code_change_ref=%s\n' "$merged"
+
+# Push the landed merge to the branch main tracks (requirement-39). Fast-forward only, never
+# forced. The merge already stands, so a skipped or rejected push is reported, not failed:
+# a non-zero exit would make the runner treat a landed unit as unmerged.
+remote=$(git config --get "branch.$MAIN.remote" || true)
+upstream=$(git config --get "branch.$MAIN.merge" || true)
+if [ -z "$remote" ] || [ -z "$upstream" ]; then
+	printf 'merge_unit: %s has no upstream, push skipped\n' "$MAIN" >&2
+elif ! git push --quiet "$remote" "$MAIN_REF:$upstream" >&2; then
+	printf 'merge_unit: push of %s to %s %s failed; the merge stands locally\n' "$MAIN" "$remote" "$upstream" >&2
+fi
