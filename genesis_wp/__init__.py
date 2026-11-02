@@ -158,6 +158,9 @@ _LEGACY_STATUS_LABELS = {
     6: "Pool", 7: "Anti legionella", 98: "Standby", 99: "No demand",
 }
 
+_WORD_BLOCKS = {REG_COIL: "coils", REG_DISCRETE_INPUT: "discrete_inputs",
+                REG_INPUT: "input_registers", REG_HOLDING: "holding_registers"}
+
 _READ_METHODS = {
     REG_COIL: "read_coils",
     REG_DISCRETE_INPUT: "read_discrete_inputs",
@@ -196,6 +199,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         self.capabilities: dict[str, Capability] = {}
         self.labels: dict[str, EnumValue] = {}
         self._enum_raw: dict = {}  # raw values of registers decoded to a label during the last read
+        self.last_words: dict = {}  # block -> address -> word from the last update
         self._raw: dict = {}  # raw first word of every register the last read decoded
         self._capability_overrides = _capabilities.validate_overrides(capability_overrides)
         # Seen running in an earlier client, as persisted by the consumer (requirement-13, ac-65).
@@ -283,6 +287,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         self, register_types=REG_TYPES, only_registers=None
     ):  # pylint:disable=too-many-branches
         """Update data from heat pump."""
+        self.last_words = {block: {} for block in _WORD_BLOCKS.values()}
         await self._ensure_unit()
         if only_registers is None:
             only_registers = [name for name, meta in REGISTERS.items() if meta[self._kind]]
@@ -307,9 +312,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             for i, (name, val) in enumerate(raw_data.items()):
                 data[name] = val
 
-            version_attrs = (ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MAJOR, ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MINOR, ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MICRO) if self._kind in GENESIS_17_MODELS else (ATTR_INPUT_SOFTWARE_VERSION_MAJOR, ATTR_INPUT_SOFTWARE_VERSION_MINOR, ATTR_INPUT_SOFTWARE_VERSION_MICRO)
-            if all(attr in data for attr in version_attrs):
-                self.firmware = '.'.join(str(data[attr]) for attr in version_attrs)
+            self._update_firmware(data)
 
             _LOGGER.debug("------------- REGISTERS ----------------------")
             for i, (name, val) in enumerate(self.data.items()):
@@ -330,6 +333,23 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             self._kind, data, overrides=self._capability_overrides, seen=self._capabilities_seen
         )
         return data
+
+    def _update_firmware(self, data):
+        """Update firmware only when all model-specific version fields are present."""
+        if self._kind in GENESIS_17_MODELS:
+            attrs = (
+                ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MAJOR,
+                ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MINOR,
+                ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MICRO,
+            )
+        else:
+            attrs = (
+                ATTR_INPUT_SOFTWARE_VERSION_MAJOR,
+                ATTR_INPUT_SOFTWARE_VERSION_MINOR,
+                ATTR_INPUT_SOFTWARE_VERSION_MICRO,
+            )
+        if all(attr in data for attr in attrs):
+            self.firmware = '.'.join(str(data[attr]) for attr in attrs)
 
     # DHF-REQ: genesis-wp/requirement-29
     def _apply_valid_when(self, values) -> None:
@@ -546,6 +566,10 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         if not read_data:
             self._chunk_unread(chunk, length, "empty response")
             return
+        # DHF-REQ: genesis-wp/requirement-40
+        self.last_words.setdefault(_WORD_BLOCKS[regtype], {}).update(
+            {start_address + i: int(word) for i, word in enumerate(read_data[:length])}
+        )
         for name, offset in chunk["slots"].items():
             self._raw[name] = read_data[offset]
             raw_data[name] = self._decode(name, read_data, offset)
