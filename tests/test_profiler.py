@@ -28,6 +28,23 @@ def lines(path):
     return [json.loads(line) for line in path.read_text().splitlines()]
 
 
+def json_decoded(values):
+    return {name: {'raw': value.raw, 'label': value.label}
+            if isinstance(value, EnumValue) else value
+            for name, value in values.items()}
+
+
+def assert_recorded_sample(sample, expected, firmware_profile):
+    assert sample['type'] == 'sample'
+    assert datetime.fromisoformat(sample['ts']).utcoffset() == timedelta(0)
+    assert sample['decoded'] == expected
+    assert set(sample['raw']) == set(firmware_profile.blocks)
+    for block, words in sample['raw'].items():
+        for address, word in words.items():
+            assert type(word) is int
+            assert word == firmware_profile.blocks[block].value(int(address))
+
+
 # DHF-TEST: genesis-wp/requirement-40 genesis-wp/ac-158 genesis-wp/ac-159
 @pytest.mark.parametrize('firmware_profile', PROFILES)
 async def test_recording(start_emulator, tmp_path, firmware_profile):
@@ -45,17 +62,9 @@ async def test_recording(start_emulator, tmp_path, firmware_profile):
     assert datetime.fromisoformat(header['started_at']).utcoffset() == timedelta(0)
     assert trailer['samples'] == 3 and trailer['failures'] == 0
     assert trailer['type'] == 'trailer' and trailer['ended_at']
-    expected = {k: {'raw': v.raw, 'label': v.label} if isinstance(v, EnumValue) else v
-                for k, v in expected.items()}
+    expected = json_decoded(expected)
     for sample in samples:
-        assert sample['type'] == 'sample'
-        assert datetime.fromisoformat(sample['ts']).utcoffset() == timedelta(0)
-        assert sample['decoded'] == expected
-        assert set(sample['raw']) == set(emu.profile.blocks)
-        for block, words in sample['raw'].items():
-            for address, word in words.items():
-                assert type(word) is int
-                assert word == emu.profile.blocks[block].value(int(address))
+        assert_recorded_sample(sample, expected, emu.profile)
     if firmware_profile.endswith('6.0.6'):
         assert samples[0]['raw']['input_registers']['30'] == 65508
         assert samples[0]['decoded']['input_calculated_heating_demand'] == -0.28

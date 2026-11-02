@@ -312,9 +312,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             for i, (name, val) in enumerate(raw_data.items()):
                 data[name] = val
 
-            version_attrs = (ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MAJOR, ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MINOR, ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MICRO) if self._kind in GENESIS_17_MODELS else (ATTR_INPUT_SOFTWARE_VERSION_MAJOR, ATTR_INPUT_SOFTWARE_VERSION_MINOR, ATTR_INPUT_SOFTWARE_VERSION_MICRO)
-            if all(attr in data for attr in version_attrs):
-                self.firmware = '.'.join(str(data[attr]) for attr in version_attrs)
+            self._update_firmware(data)
 
             _LOGGER.debug("------------- REGISTERS ----------------------")
             for i, (name, val) in enumerate(self.data.items()):
@@ -335,6 +333,23 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             self._kind, data, overrides=self._capability_overrides, seen=self._capabilities_seen
         )
         return data
+
+    def _update_firmware(self, data):
+        """Update firmware only when all model-specific version fields are present."""
+        if self._kind in GENESIS_17_MODELS:
+            attrs = (
+                ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MAJOR,
+                ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MINOR,
+                ATTR_INPUT_CONTROL_SOFTWARE_VERSION_MICRO,
+            )
+        else:
+            attrs = (
+                ATTR_INPUT_SOFTWARE_VERSION_MAJOR,
+                ATTR_INPUT_SOFTWARE_VERSION_MINOR,
+                ATTR_INPUT_SOFTWARE_VERSION_MICRO,
+            )
+        if all(attr in data for attr in attrs):
+            self.firmware = '.'.join(str(data[attr]) for attr in attrs)
 
     # DHF-REQ: genesis-wp/requirement-29
     def _apply_valid_when(self, values) -> None:
