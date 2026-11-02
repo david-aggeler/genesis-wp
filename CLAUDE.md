@@ -73,7 +73,7 @@ Direction and principles live in gold, in genesis-wp vision-1.
 - Sessions are driven remotely (Claude Desktop → `/rc` → `claude`, kept alive by `zx`). A permission prompt may go unanswered — don't park work behind one.
 - Batch related git operations with `&&` so they land atomically.
 - Prefer a reversible move (new commit, branch, stash) over a destructive in-place edit.
-- **Push main to origin after every commit.** When a commit or merge lands on local `main`, push it right away with `git push origin main:master` (the remote's default branch is `master`). Pre-approved; no per-push OK. Fast-forward only: if the push is rejected, report it and stop, never force. CR branches and worktree branches stay local.
+- **Push main to origin after every commit.** When a commit or merge lands on local `main`, push it right away with `git push origin main:master` (the remote's default branch is `master`). Pre-approved; no per-push OK. Fast-forward only: if the push is rejected, report it and stop, never force. CR branches and worktree branches stay local. `openbrain-client merge` does this push itself (requirement-39); push by hand only for commits made on main outside it.
 - **Every other outward-facing action needs the owner's OK every time.** That covers any other push (force pushes, other branches, other remotes, tags), GitHub releases, PyPI uploads, and upstream issues, PRs or comments (ulrichwi/pythermiagenesis17, CJNE/pythermiagenesis, pail23/stiebel_eltron_isg_component #684).
 
 ### Access model
@@ -190,7 +190,7 @@ Commands are NEVER read from a record. Every invoker resolves them from the comm
 
 Each rung has `in_session` stages, which the authoring session runs, and `runner_owned` stages, which the openbrain-client runner runs. The session never runs a runner-owned stage to grade its own work. Exception, until the runner can execute runner-owned stages on this host: the session runs the same committed commands by hand and says so in the change_request evidence.
 
-The merge is the git operation ONLY. It runs no gate and tears nothing down.
+The merge is the git operation plus the push of main to its upstream, nothing else. It runs no gate and tears nothing down.
 
 ## The gate
 
