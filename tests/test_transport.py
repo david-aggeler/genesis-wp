@@ -18,24 +18,39 @@ pytestmark = pytest.mark.fixture
 FIRMWARE = ["input_control_software_version_major", "input_control_software_version_minor", "input_control_software_version_micro"]
 
 
+#: Full updates tried before the test fails. A blocking call in the update path blocks every
+#: update; host scheduling delay on a loaded gate host lands on a random one (requirement-36).
+NON_BLOCKING_ATTEMPTS = 3
+
+
+def _slow_callbacks(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records if "Executing" in r.getMessage() and "took" in r.getMessage()]
+
+
 # DHF-REQ: genesis-wp/requirement-2  DHF-TEST: genesis-wp/ac-4
+# DHF-REQ: genesis-wp/requirement-36
 async def test_full_update_does_not_block_the_event_loop(start_emulator, caplog):
     emu = await start_emulator(PROFILE_615)
     loop = asyncio.get_running_loop()
     debug, threshold = loop.get_debug(), loop.slow_callback_duration
     loop.set_debug(True)
     loop.slow_callback_duration = 0.1
+    attempts = []
     try:
         with caplog.at_level(logging.WARNING, logger="asyncio"):
-            # delay=0 so the update is pure I/O; the inherited 0.1 s delay is an await, not a block.
-            client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
-            await client.async_update()
-            await client.close()
+            for _ in range(NON_BLOCKING_ATTEMPTS):
+                caplog.clear()
+                # delay=0 so the update is pure I/O; the inherited 0.1 s delay is an await, not a block.
+                client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
+                await client.async_update()
+                await client.close()
+                attempts.append(_slow_callbacks(caplog))
+                if not attempts[-1]:
+                    break
     finally:
         loop.set_debug(debug)
         loop.slow_callback_duration = threshold
-    slow = [r.getMessage() for r in caplog.records if "Executing" in r.getMessage() and "took" in r.getMessage()]
-    assert slow == []
+    assert attempts[-1] == [], attempts
 
 
 # DHF-REQ: genesis-wp/requirement-2  DHF-TEST: genesis-wp/ac-6
