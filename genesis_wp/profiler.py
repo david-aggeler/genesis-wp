@@ -138,7 +138,8 @@ def _check_header(header):
         raise ValueError('recording requires a versioned header')
     if header['format_version'] != 1:
         raise ValueError('unsupported recording format_version')
-    if header.get('model') not in MODEL_NAMES:
+    model = header.get('model')
+    if not isinstance(model, str) or model not in MODEL_NAMES:
         raise ValueError('unsupported recording model')
 
 
@@ -173,9 +174,19 @@ def _load_entry(recording, entry):
     elif kind == 'failure':
         recording.failures.append(entry)
     elif kind == 'trailer':
+        _check_trailer(recording, entry)
         recording.trailer = entry
     else:
         raise ValueError('unexpected recording entry')
+
+
+def _check_trailer(recording, trailer):
+    for name in ('samples', 'failures'):
+        count = trailer.get(name)
+        if type(count) is not int or count < 0:
+            raise ValueError(f'trailer {name} must be a nonnegative integer')
+        if count != len(getattr(recording, name)):
+            raise ValueError(f'trailer {name} differs from loaded entries')
 
 
 def _validate_words(raw):

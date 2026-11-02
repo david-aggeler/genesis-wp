@@ -112,6 +112,59 @@ def test_invalid_header(tmp_path, content):
         load_recording(path)
 
 
+# DHF-TEST: genesis-wp/requirement-42
+@pytest.mark.parametrize('model', [[], {}])
+def test_loader_rejects_non_string_model(tmp_path, model):
+    from genesis_wp.profiler import load_recording
+    path = tmp_path / 'invalid.jsonl'
+    path.write_text(json.dumps(dict(type='header', format_version=1, model=model)) + '\n')
+    with pytest.raises(ValueError, match='model'):
+        load_recording(path)
+
+
+# DHF-TEST: genesis-wp/requirement-42
+@pytest.mark.parametrize('field', ['samples', 'failures'])
+@pytest.mark.parametrize('count', [None, True, False, -1, 1.0, '1', [], {}, 0, 2])
+def test_loader_rejects_invalid_trailer_counts(tmp_path, field, count):
+    from genesis_wp.profiler import load_recording
+    path = tmp_path / 'invalid.jsonl'
+    trailer = dict(type='trailer', samples=1, failures=1)
+    trailer[field] = count
+    entries = [dict(type='header', format_version=1, model=WPE_I_KIND),
+               dict(type='sample', raw={}), dict(type='failure', error='OSError'), trailer]
+    path.write_text(''.join(json.dumps(entry) + '\n' for entry in entries))
+    with pytest.raises(ValueError, match=field):
+        load_recording(path)
+
+
+# DHF-TEST: genesis-wp/requirement-42
+@pytest.mark.parametrize('field', ['samples', 'failures'])
+def test_loader_rejects_missing_trailer_count(tmp_path, field):
+    from genesis_wp.profiler import load_recording
+    path = tmp_path / 'invalid.jsonl'
+    trailer = dict(type='trailer', samples=0, failures=0)
+    del trailer[field]
+    entries = [dict(type='header', format_version=1, model=WPE_I_KIND), trailer]
+    path.write_text(''.join(json.dumps(entry) + '\n' for entry in entries))
+    with pytest.raises(ValueError, match=field):
+        load_recording(path)
+
+
+# DHF-TEST: genesis-wp/requirement-42
+@pytest.mark.parametrize('complete', [False, True])
+def test_loader_accepts_consistent_counts_and_truncated_prefix(tmp_path, complete):
+    from genesis_wp.profiler import load_recording
+    path = tmp_path / 'valid.jsonl'
+    entries = [dict(type='header', format_version=1, model=WPE_I_KIND),
+               dict(type='sample', raw={}), dict(type='failure', error='OSError')]
+    if complete:
+        entries.append(dict(type='trailer', samples=1, failures=1))
+    path.write_text(''.join(json.dumps(entry) + '\n' for entry in entries))
+    recording = load_recording(path)
+    assert len(recording.samples) == len(recording.failures) == 1
+    assert recording.truncated is not complete
+
+
 @pytest.mark.parametrize('entry', [None, {'type': 'other'},
     {'type': 'sample'}, {'type': 'sample', 'raw': {'unknown': {}}},
     {'type': 'sample', 'raw': {'input_registers': {'30': True}}},
