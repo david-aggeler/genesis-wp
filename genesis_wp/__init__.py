@@ -34,9 +34,10 @@ DEFAULT_TIMEOUT = 5.0
 
 
 class ThermiaException(Exception):
+    # DHF-REQ: genesis-wp/requirement-37
     def __init__(self, code=None, *args, **kwargs):
         self.message = ""
-        super().__init__(*args, **kwargs)
+        super().__init__(*((code,) if code is not None else ()), *args, **kwargs)
         if code is not None:
             self.code = code
             if isinstance(code, str):
