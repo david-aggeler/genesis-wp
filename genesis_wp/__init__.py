@@ -89,11 +89,18 @@ _WORD_RANGES = {TYPE_INT: (-32768, 32767), TYPE_UINT: (0, 65535)}
 _SCALE_TOLERANCE = 1e-6
 
 
+# DHF-REQ: genesis-wp/requirement-38
+def _refuse(exc_class, message):
+    """Log a write refusal once and construct its unchanged library exception."""
+    _LOGGER.warning("%s", message)
+    return exc_class(message)
+
+
 # DHF-REQ: genesis-wp/requirement-33
 def _coil_payload(register, value) -> bool:
     """The FC5 bit for a coil write: only 0, 1, True or False, never a truthy coercion."""
     if not isinstance(value, int) or value not in (0, 1):
-        raise GenesisInvalidWriteError(f"refusing to write {register}: coil value {value!r} is not 0, 1, True or False")
+        raise _refuse(GenesisInvalidWriteError, f"refusing to write {register}: coil value {value!r} is not 0, 1, True or False")
     return bool(value)
 
 
@@ -101,20 +108,20 @@ def _coil_payload(register, value) -> bool:
 def _holding_payload(register, meta, value) -> int:
     """The FC6 word for a holding write: the rounded scaled value, refused unless exact and in range."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise GenesisInvalidWriteError(f"refusing to write {register}: {value!r} is not a number")
+        raise _refuse(GenesisInvalidWriteError, f"refusing to write {register}: {value!r} is not a number")
     scaled = value * meta[KEY_SCALE]
     if isinstance(scaled, float) and not math.isfinite(scaled):
-        raise GenesisInvalidWriteError(f"refusing to write {register}: {value!r} scales to a non-finite value")
+        raise _refuse(GenesisInvalidWriteError, f"refusing to write {register}: {value!r} scales to a non-finite value")
     word = round(scaled)
     if abs(scaled - word) > _SCALE_TOLERANCE:
-        raise GenesisInvalidWriteError(
+        raise _refuse(GenesisInvalidWriteError,
             f"refusing to write {register}: {value!r} is not exact at scale 1/{meta[KEY_SCALE]}"
         )
     if meta[KEY_DATATYPE] not in _WORD_RANGES:
-        raise GenesisInvalidWriteError(f"refusing to write {register}: datatype {meta[KEY_DATATYPE]} is not a 16-bit word")
+        raise _refuse(GenesisInvalidWriteError, f"refusing to write {register}: datatype {meta[KEY_DATATYPE]} is not a 16-bit word")
     low, high = _WORD_RANGES[meta[KEY_DATATYPE]]
     if not low <= word <= high:
-        raise GenesisInvalidWriteError(
+        raise _refuse(GenesisInvalidWriteError,
             f"refusing to write {register}: {value!r} scales to {word}, outside {low}..{high} for {meta[KEY_DATATYPE]}"
         )
     return num_to_bin(word)
@@ -388,16 +395,16 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
     async def _set_data(self, register, value):
         # The only path that issues Modbus writes (FC5/6). Refuse before connecting or sending.
         if self._read_only:
-            raise GenesisReadOnlyError(
+            raise _refuse(GenesisReadOnlyError,
                 f"refusing to write {register}: client is read-only (construct with read_only=False to allow writes)"
             )
         meta = REGISTERS.get(register) if isinstance(register, str) else None
         if meta is None or not meta[self._kind]:
             # An unknown name, or an address this model does not document (requirement-33).
-            raise GenesisInvalidWriteError(f"refusing to write {register!r}: not a register of model {self._kind}")
+            raise _refuse(GenesisInvalidWriteError, f"refusing to write {register!r}: not a register of model {self._kind}")
         # The register type alone decides writability (requirement-30).
         if meta[KEY_REG_TYPE] not in (REG_COIL, REG_HOLDING):
-            raise GenesisNotWritableError(
+            raise _refuse(GenesisNotWritableError,
                 f"refusing to write {register}: a {meta[KEY_REG_TYPE]} register is not writable"
             )
         if meta[KEY_REG_TYPE] == REG_COIL:
