@@ -10,6 +10,8 @@ from genesis_wp import (
     ThermiaException,
 )
 
+pytestmark = pytest.mark.unit
+
 
 # DHF-TEST: genesis-wp/requirement-37
 # DHF-TEST: genesis-wp/ac-146 genesis-wp/ac-149
