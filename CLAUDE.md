@@ -213,11 +213,12 @@ Cumulative by rung — each rung runs everything below it.
 **Never pipe a gate into `grep`, `head`, or `tail` and then read the exit code.** The shell reports the *filter's* status, so a red gate reads as a pass. Capture first, narrow after:
 
 ```zsh
+mkdir -p scratchpad
 python -m pytest > scratchpad/gate.out 2>&1; rc=$?
 rg -i 'failed|error' scratchpad/gate.out; print "gate status: $rc"
 ```
 
-Copy this form. The capture variable is `rc`, never `status` — in zsh `status` is a readonly alias of `?`, so `status=$?` aborts the compound and loses the result.
+Copy this form. The capture variable is `rc`, never `status` — in zsh `status` is a readonly alias of `?`, so `status=$?` aborts the compound and loses the result. Keep the `mkdir -p`: `scratchpad/` is gitignored, so a fresh worktree (the runner's `worktrees/cr-<n>`) has none and the redirect fails before the gate runs.
 
 ## Command surfaces — ask the tool, not this file
 
