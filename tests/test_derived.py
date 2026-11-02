@@ -287,11 +287,11 @@ def test_constructor_accepts_a_maximum_gap_shorter_than_the_window():
 
 
 def skipped_factors(caplog) -> list[float]:
-    """Factors [L/min per %] named by debug records of a skipped calibration."""
+    """Factors [L/min per %] named by log records of a skipped calibration."""
     factors = []
     for record in caplog.records:
         message = record.getMessage()
-        if record.levelno == logging.DEBUG and "calibration" in message and "skipped" in message:
+        if "calibration" in message and "skipped" in message:
             factors += [float(number) for number in re.findall(r"factor (\d+(?:\.\d+)?)", message)]
     return factors
 
@@ -314,10 +314,11 @@ def test_an_implausible_calibration_window_leaves_the_calibration_unchanged(capl
     feed(second, STEADY)  # a plausible window at 35 %
     earlier = second.calibration
     assert earlier == pytest.approx(CONDENSER_STEADY / 35, rel=1e-9)
-    assert feed(second, low_pump, start=390, seconds=330).source == "calculated"  # a full window at 2 %
+    # Allow the next once-per-window check after the transition window was rejected.
+    assert feed(second, low_pump, start=390, seconds=600).source == "calculated"
     assert second.calibration == earlier
     assert any(factor == pytest.approx(implausible, rel=0.01) for factor in skipped_factors(caplog))
-    resting = second.add(750, {**STOPPED, CONDENSER_PUMP: 35.0})
+    resting = second.add(1020, {**STOPPED, CONDENSER_PUMP: 35.0})
     assert resting.source == "pump_speed" and resting.value == pytest.approx(earlier * 35, rel=1e-9)
 
 
@@ -366,3 +367,52 @@ def test_a_backward_clock_step_restarts_the_window_instead_of_freezing_the_estim
 def test_fluid_rejects_an_underflowing_or_overflowing_volumetric_heat_capacity(cp, density):
     with pytest.raises(ValueError):
         Fluid(cp=cp, density=density, source="x")
+
+
+def plausibility_skips(caplog):
+    return [r for r in caplog.records if "calibration skipped, factor" in r.getMessage()]
+
+
+# DHF-TEST: genesis-wp/requirement-31 DHF-TEST: genesis-wp/ac-150
+def test_implausible_calibration_checks_wait_one_window(caplog):
+    caplog.set_level(logging.DEBUG, logger="genesis_wp.derived")
+    estimator = FlowEstimator(CONDENSER)
+    timestamps = []
+    for timestamp in range(0, 931, 30):
+        before = len(plausibility_skips(caplog))
+        estimate = estimator.add(timestamp, {**STEADY, CONDENSER_PUMP: 2.0})
+        if len(plausibility_skips(caplog)) > before:
+            timestamps.append(timestamp)
+        assert estimate.calibration is None
+    assert len(timestamps) >= 3
+    assert all(b - a >= 300 for a, b in zip(timestamps, timestamps[1:]))
+
+
+# DHF-TEST: genesis-wp/requirement-31 DHF-TEST: genesis-wp/ac-148
+@pytest.mark.parametrize("precalibrated", [False, True])
+def test_implausible_calibration_warns_once_per_run(caplog, precalibrated):
+    caplog.set_level(logging.DEBUG, logger="genesis_wp.derived")
+    estimator = FlowEstimator(CONDENSER)
+    start = 0
+    if precalibrated:
+        feed(estimator, STEADY, seconds=300)
+        assert estimator.calibration is not None
+        start = 330
+    caplog.clear()
+    feed(estimator, {**STEADY, CONDENSER_PUMP: 2.0}, start=start, seconds=1200)
+    records = plausibility_skips(caplog)
+    assert len(records) >= 3
+    assert records[0].levelno == logging.WARNING
+    assert all(r.levelno == logging.DEBUG for r in records[1:])
+    assert "60.0" in records[0].getMessage()
+    assert skipped_factors(caplog)[0] > 0.6
+
+    # A successful calibration ends the run; the next rejection warns again.
+    feed(estimator, STEADY, start=start + 1230, seconds=600)
+    assert estimator.calibration is not None
+    caplog.clear()
+    feed(estimator, {**STEADY, CONDENSER_PUMP: 2.0}, start=start + 1860, seconds=1200)
+    records = plausibility_skips(caplog)
+    assert len(records) >= 3
+    assert records[0].levelno == logging.WARNING
+    assert all(r.levelno == logging.DEBUG for r in records[1:])
