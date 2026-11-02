@@ -180,3 +180,18 @@ async def test_refused_write_logs_one_warning(mock_modbus_unit, caplog, read_onl
     assert not mock_modbus_unit.connected
     assert mock_modbus_unit.read_events == []
     assert writes == []
+
+
+# DHF-TEST: genesis-wp/requirement-33  DHF-TEST: genesis-wp/ac-152
+async def test_value_inside_scale_tolerance_writes_115(mock_modbus_unit):
+    writes = []
+    mock_modbus_unit.on_write(writes.append)
+    await _writer(mock_modbus_unit).async_set(INT_SCALE_100, 1.15 + 1e-9)
+    assert [(w.function_code, w.address, list(w.values)) for w in writes] == [
+        (6, REGISTERS[INT_SCALE_100][KEY_ADDRESS], [115])
+    ]
+
+
+# DHF-TEST: genesis-wp/requirement-33  DHF-TEST: genesis-wp/ac-152
+async def test_value_outside_scale_tolerance_is_refused(mock_modbus_unit):
+    await _assert_refused(mock_modbus_unit, INT_SCALE_100, 1.15 + 1e-5)
