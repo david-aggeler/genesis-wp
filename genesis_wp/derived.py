@@ -186,6 +186,7 @@ class FlowEstimator:
         self._last_timestamp: float | None = None
         self._calibration: float | None = None
         self._calibrated_at: float | None = None
+        self._skip_run = False
         self._estimate = FlowEstimate(None, UNKNOWN, None)
 
     @property
@@ -292,6 +293,7 @@ class FlowEstimator:
             duration += dt
         return _finite(pump_time / duration)
 
+    # DHF-REQ: genesis-wp/requirement-31
     def _calibrate(self, flow: float) -> None:
         """Update the calibration from the window's flow, at most once per ``window_s``."""
         end = self._window[-1].timestamp
@@ -304,14 +306,18 @@ class FlowEstimator:
             return
         # Adopting a factor whose 100 % flow exceeds max_flow would push the fallback above the clamp.
         if factor * PUMP_RANGE[1] > self.max_flow:
-            _LOGGER.debug("%s flow: calibration skipped, factor %.4f L/min per %% × %.0f %% exceeds %.1f L/min "
+            log = _LOGGER.debug if self._skip_run else _LOGGER.warning
+            log("%s flow: calibration skipped, factor %.4f L/min per %% × %.0f %% exceeds %.1f L/min "
                           "(window pump %.1f %%)", self.loop.name, factor, PUMP_RANGE[1], self.max_flow, pump)
+            self._skip_run = True
+            self._calibrated_at = end
             return
         if self._calibration is None:
             self._calibration = factor
         else:
             self._calibration += CALIBRATION_WEIGHT * (factor - self._calibration)
         self._calibrated_at = end
+        self._skip_run = False
         _LOGGER.debug("%s flow: calibration %.4f L/min per %% (window pump %.1f %%)", self.loop.name,
                       self._calibration, pump)
 
