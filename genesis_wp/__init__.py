@@ -354,17 +354,7 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
     # DHF-REQ: genesis-wp/requirement-29
     def _apply_valid_when(self, values) -> None:
         """None for a register whose declared selector is not in this read or reads another raw value."""
-        for name in values:
-            condition = REGISTERS[name].get(KEY_VALID_WHEN, {}).get(self._kind)
-            if condition is None or values[name] is None:
-                continue
-            selector, required = condition
-            raw = self._raw.get(selector)
-            if raw == required:
-                continue
-            reason = "not in this update" if raw is None else f"reads {raw}, not {required}"
-            _LOGGER.debug("%s reported as None: selector %s %s", name, selector, reason)
-            values[name] = None
+        apply_valid_when(values, self._raw, self._kind)
 
     def _decode_labels(self, data) -> dict[str, EnumValue]:
         labels = {}
@@ -575,23 +565,11 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             raw_data[name] = self._decode(name, read_data, offset)
 
     def _decode(self, name, words, offset):
-        """Decode one register from its chunk's words, driven by its register fields."""
+        """Decode through the same pure function used for offline recordings."""
         info = REGISTERS[name]
-        val = words[offset]
-        not_fitted = info.get(KEY_NOT_FITTED, {}).get(self._kind)
-        if not_fitted is not None and val == not_fitted:
-            return None  # sensor not fitted
-        datatype = info[KEY_DATATYPE]
-        if datatype == TYPE_STATUS:
-            val = self._decode_status(name, info, val)
-        elif datatype in _WORD_DECODERS:
-            val = _WORD_DECODERS[datatype](words, offset)
-        scale = info[KEY_SCALE]
-        if scale != 1:
-            val = val / scale
-            if info.get(KEY_KIND, {}).get(self._kind) == KIND_COUNT:
-                val = self._count_value(name, val)
-        return val
+        if info[KEY_DATATYPE] == TYPE_STATUS and info.get(KEY_ENUM, {}).get(self._kind) is not None:
+            self._enum_raw[name] = words[offset]
+        return decode_register(name, words, offset, self._kind)
 
     # DHF-REQ: genesis-wp/requirement-35
     @staticmethod
@@ -602,14 +580,6 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         _LOGGER.debug("Count register %s decoded to non-integral %s; kept as float", name, val)
         return val
 
-    def _decode_status(self, name, info, val):
-        table = info.get(KEY_ENUM, {}).get(self._kind)
-        if table is None:
-            return _LEGACY_STATUS_LABELS.get(val, "OFF")
-        # Documented demand values (issue-10); an undocumented one stays raw.
-        self._enum_raw[name] = val
-        return table.get(val, val)
-
     def _chunk_unread(self, chunk, length, reason):
         """Record a chunk's registers as unread; their values stay absent, never stale."""
         names = list(chunk["slots"])
@@ -619,3 +589,44 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             chunk[KEY_REG_TYPE], chunk["start"], chunk["start"] + length - 1, reason, len(names), ", ".join(names),
         )
 
+# DHF-REQ: genesis-wp/requirement-42
+def decode_register(name, words, offset, model, registers=REGISTERS):
+    """Decode one register from its chunk's words, driven by its register fields."""
+    info = registers[name]
+    val = words[offset]
+    not_fitted = info.get(KEY_NOT_FITTED, {}).get(model)
+    if not_fitted is not None and val == not_fitted:
+        return None  # sensor not fitted
+    datatype = info[KEY_DATATYPE]
+    if datatype == TYPE_STATUS:
+        val = _decode_status_value(info, val, model)
+    elif datatype in _WORD_DECODERS:
+        val = _WORD_DECODERS[datatype](words, offset)
+    scale = info[KEY_SCALE]
+    if scale != 1:
+        val = val / scale
+        if info.get(KEY_KIND, {}).get(model) == KIND_COUNT:
+            val = ThermiaGenesis._count_value(name, val)
+    return val
+
+
+def _decode_status_value(info, val, model):
+    table = info.get(KEY_ENUM, {}).get(model)
+    if table is None:
+        return _LEGACY_STATUS_LABELS.get(val, "OFF")
+    return table.get(val, val)
+
+
+def apply_valid_when(values, raw_words, model, registers=REGISTERS):
+    """Apply the same selector validity contract to live and offline values."""
+    for name in values:
+        condition = registers[name].get(KEY_VALID_WHEN, {}).get(model)
+        if condition is None or values[name] is None:
+            continue
+        selector, required = condition
+        raw = raw_words.get(selector)
+        if raw == required:
+            continue
+        reason = "not in this update" if raw is None else f"reads {raw}, not {required}"
+        _LOGGER.debug("%s reported as None: selector %s %s", name, selector, reason)
+        values[name] = None
