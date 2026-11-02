@@ -114,7 +114,7 @@ Put working files (drafts, one-off scripts, intermediate outputs the user may wa
 
 ## Skill trees — know which one you're editing
 
-- **Local skills** under `.claude/skills/` that have no `x-openbrain-*` frontmatter are repo files. Edit them directly, under a CR, and add a `!` exception to `.gitignore` so they get tracked.
+- **Local skills** under `.claude/skills/` that have no `x-openbrain-*` frontmatter are repo files. Edit them directly, without a CR (see *Change control*), and add a `!` exception to `.gitignore` so they get tracked.
 - **Materialized skills** carry `x-openbrain-*` in their `SKILL.md` frontmatter. Never edit them here. They are authored and released in gold, then pulled with `openbrain-client init-skills`. `.gitignore` ignores `.claude/skills/`, `.claude/agents/` and `.claude/materialization.json` as whole directories for that reason.
 - `.claude/agents/<slug>.md` is derived from the gold skill's agent block by the same `init-skills` run. Never hand-edit it.
 
@@ -172,11 +172,12 @@ The loop, always:
 4. Before closing: check the diff against EVERY acceptance criterion, one by one, write down the evidence. Green gate alone is NOT proof.
 5. Close the CR with the merge SHA. If an issue drove it, close the issue via an `issue_fix` that references the CR and the SHA.
 
-Small change? Still a CR. Repo docs-only? Still a CR (`transition_gate: prose`).
+Small change? Still a CR. Other repo docs? Still a CR (`transition_gate: prose`).
 
 The rule covers the **repo working tree**: code, tests, fixtures, packaging, repo markdown. It does NOT cover:
 
 - **SoR records** (see above).
+- **Agent instructions**: `CLAUDE.md` (and its `AGENTS.md` symlink) and local, non-materialized skills under `.claude/skills/`. Edit them directly, commit them on their own with a message that says what changed and why, and push main. Owner decision 2026-11-02.
 - **Catalog items.** Materialized skills, templates, methods, runbooks and executors are owned by OpenBrain. Fix them at the source.
 - **Local, gitignored state**, such as `openbrain-client.local.yaml` and `.logs/`.
 
