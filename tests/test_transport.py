@@ -48,7 +48,7 @@ async def test_upper_case_hostname_is_accepted(start_emulator):
 
 
 # DHF-REQ: genesis-wp/requirement-2  DHF-TEST: genesis-wp/ac-24
-async def emulator_client_runs_on_an_injected_unit(start_emulator):
+async def test_client_runs_on_an_injected_unit(start_emulator):
     emu = await start_emulator(PROFILE_615)
     connection = ModbusConnection(ModbusTcpParams(host=emu.host, port=emu.port), timeout=TEST_CLIENT_TIMEOUT)
     await connection.connect()
