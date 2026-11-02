@@ -73,7 +73,8 @@ Direction and principles live in gold, in genesis-wp vision-1.
 - Sessions are driven remotely (Claude Desktop → `/rc` → `claude`, kept alive by `zx`). A permission prompt may go unanswered — don't park work behind one.
 - Batch related git operations with `&&` so they land atomically.
 - Prefer a reversible move (new commit, branch, stash) over a destructive in-place edit.
-- **Outward-facing actions need the owner's OK every time.** That covers `git push`, GitHub releases, PyPI uploads, and upstream issues, PRs or comments (ulrichwi/pythermiagenesis17, CJNE/pythermiagenesis, pail23/stiebel_eltron_isg_component #684).
+- **Push main to origin after every commit.** When a commit or merge lands on local `main`, push it right away with `git push origin main:master` (the remote's default branch is `master`). Pre-approved; no per-push OK. Fast-forward only: if the push is rejected, report it and stop, never force. CR branches and worktree branches stay local.
+- **Every other outward-facing action needs the owner's OK every time.** That covers any other push (force pushes, other branches, other remotes, tags), GitHub releases, PyPI uploads, and upstream issues, PRs or comments (ulrichwi/pythermiagenesis17, CJNE/pythermiagenesis, pail23/stiebel_eltron_isg_component #684).
 
 ### Access model
 
@@ -100,7 +101,7 @@ Pre-approved, either direction:
 
 Still needs the owner, whoever asked:
 
-- Anything outward-facing (see *Operational conventions*): `git push`, releases, PyPI uploads, upstream issues and comments.
+- Anything outward-facing (see *Operational conventions*) beyond pushing `main` to `origin/master`: other pushes, releases, PyPI uploads, upstream issues and comments.
 - Any contact with the real heat pump, including FC1–4 fixture probes.
 - Weakening the write guard or the read-only default.
 - Product direction: a vision, a dd_plan, or a design_decision that reverses one the owner made. Facts about the owner's plant (what is installed) come from the owner; a position wpe-ha-1 relays is cited as relayed.
