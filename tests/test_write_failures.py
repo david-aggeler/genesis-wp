@@ -25,7 +25,7 @@ from genesis_wp.const import (
 )
 from genesis_wp.emulator.profile import COILS, HOLDING_REGISTERS
 
-from .harness import PROFILE_615, WPE_I_KIND
+from .harness import PROFILE_615, WPE_I_KIND, emulator_client
 from .test_logging_hygiene import assert_no_host_in_chain
 
 pytestmark = pytest.mark.writes
@@ -41,7 +41,7 @@ def _address(register):
 @pytest.mark.parametrize("register", NOT_WRITABLE)
 async def test_write_to_a_read_only_register_type_raises_before_any_request(start_emulator, register):
     emu = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, read_only=False)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, read_only=False)
     try:
         await client.async_update(only_registers=[ATTR_HOLDING_COMFORT_WHEEL_SETTING])
         before = len(emu.requests)
@@ -75,7 +75,7 @@ async def test_mock_unit_sees_no_request_for_a_read_only_register_type(mock_modb
 async def test_rejected_write_raises_a_host_free_connection_error(start_emulator, block, register, value):
     emu = await start_emulator(PROFILE_615)
     emu.inject_fault(block, _address(register))
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, read_only=False)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, read_only=False)
     try:
         with pytest.raises(ThermiaConnectionError) as info:
             await client.async_set(register, value)

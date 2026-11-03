@@ -8,7 +8,7 @@ from modbus_connection import ModbusExceptionError
 from genesis_wp import ThermiaGenesis
 from genesis_wp.const import KEY_VALID_WHEN, MODEL_STIEBEL_WPE_I_071, REGISTERS
 
-from .harness import PROFILE_606, PROFILE_615, WPE_I_KIND
+from .harness import PROFILE_606, PROFILE_615, WPE_I_KIND, emulator_client
 
 pytestmark = pytest.mark.fixture
 
@@ -17,7 +17,7 @@ SOURCE = "holding_outdoor_temperature_source"  # holding 117, outdoor temperatur
 
 
 async def update(emu, registers=None):
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
     try:
         return await client.async_update(only_registers=registers)
     finally:

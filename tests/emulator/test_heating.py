@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from genesis_wp import ThermiaGenesis
 from genesis_wp.emulator.heating import interpolate
 
-from ..harness import PROFILE_615
+from ..harness import PROFILE_615, emulator_client
 
 pytestmark = pytest.mark.dynamics
 
@@ -25,7 +24,7 @@ def curves(hc1=HC1_NOW, hc2=HC2_NOW) -> dict:
 
 async def read(emu, client=None):
     own = client is None
-    client = client or ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
+    client = client or emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
     try:
         return await client.async_update(only_registers=NAMES)
     finally:
@@ -76,7 +75,7 @@ async def test_curve_point_written_to_the_emulator_moves_the_set_point(start_emu
     assert emu.profile.blocks["holding_registers"].value(9) == 3300
     emu.step()
     assert (await read(emu))["input_system_supply_line_calculated_set_point"] == 33
-    writer = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0, read_only=False)
+    writer = emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0, read_only=False)
     try:
         await writer.async_set("holding_set_point_heat_curve_y_4", 38.0)  # emulator only, never the real plant
     finally:
@@ -87,7 +86,7 @@ async def test_curve_point_written_to_the_emulator_moves_the_set_point(start_emu
 
 async def test_ignored_writes_leave_the_curve_alone(start_emulator):
     emu = await dynamic(start_emulator, 0, apply_writes=False)
-    writer = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0, read_only=False)
+    writer = emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0, read_only=False)
     try:
         await writer.async_set("holding_set_point_heat_curve_y_4", 38.0)
     finally:
@@ -99,7 +98,7 @@ async def test_ignored_writes_leave_the_curve_alone(start_emulator):
 # DHF-REQ: genesis-wp/requirement-15  DHF-TEST: genesis-wp/ac-52
 async def test_supply_temperature_approaches_its_set_point_with_a_lag(start_emulator):
     emu = await dynamic(start_emulator, 8.75, overrides={**curves(), ("input_registers", 12): 2830})
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
+    client = emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
     try:
         before = await read(emu, client)
         assert before["input_system_supply_line_temperature"] == 28.3
@@ -127,7 +126,7 @@ STOPPED = {("input_registers", 5): 0, ("input_registers", 39): 0}  # compressor 
 
 async def readings(emu, names, steps, every=1):
     """Read ``names`` after each of ``steps`` steps of ``every``."""
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
+    client = emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
     try:
         rows = []
         for _ in range(steps):
@@ -209,7 +208,7 @@ COOLING_READ = ["input_first_prioritised_demand", "dinput_indication_when_mixing
 
 async def write(emu, **values):
     """Write-enabled client against the emulator only (design_decision-5); the real plant is never written."""
-    writer = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0, read_only=False)
+    writer = emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0, read_only=False)
     try:
         for name, value in values.items():
             await writer.async_set(name, value)
@@ -218,7 +217,7 @@ async def write(emu, **values):
 
 
 async def read_cooling(emu):
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
+    client = emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
     try:
         return await client.async_update(only_registers=COOLING_READ)
     finally:
@@ -277,7 +276,7 @@ async def test_without_a_buffer_sensor_hc2_follows_its_set_point_up_to_t33(start
     """With T31 not fitted, the mixer is capped by the system supply (issue-12)."""
     emu = await dynamic(start_emulator, 5.0, overrides=curves(), capabilities={"buffer_tank": False})
     emu.step(60)
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
+    client = emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
     try:
         data = await client.async_update(only_registers=[*NAMES, "input_buffer_tank_temperature",
                                                          "input_mix_valve_1_supply_line_temperature"])

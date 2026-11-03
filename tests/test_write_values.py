@@ -29,7 +29,7 @@ from genesis_wp.const import (
 )
 from genesis_wp.emulator.profile import HOLDING_REGISTERS
 
-from .harness import PROFILE_615, WPE_I_KIND
+from .harness import PROFILE_615, WPE_I_KIND, emulator_client
 
 pytestmark = pytest.mark.writes
 
@@ -80,7 +80,7 @@ async def test_exact_value_is_written_as_the_rounded_scaled_integer(mock_modbus_
 # DHF-TEST: genesis-wp/requirement-33  DHF-TEST: genesis-wp/ac-131
 async def test_emulator_receives_the_rounded_scaled_integer(start_emulator):
     emu = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, read_only=False)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, read_only=False)
     try:
         assert await client.async_set(INT_SCALE_100, 1.15) == 1.15
     finally:

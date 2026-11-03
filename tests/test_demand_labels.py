@@ -9,7 +9,7 @@ import pytest
 from genesis_wp import ThermiaGenesis
 from genesis_wp.const import MODEL_MEGA
 
-from .harness import PROFILE_615
+from .harness import PROFILE_615, emulator_client
 
 pytestmark = pytest.mark.fixture
 
@@ -17,7 +17,7 @@ DEMAND = "input_first_prioritised_demand"
 
 
 async def update(emu) -> ThermiaGenesis:
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
+    client = emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
     try:
         await client.async_update(only_registers=[DEMAND, "input_second_prioritised_demand"])
     finally:

@@ -13,7 +13,7 @@ import pytest
 from genesis_wp import ThermiaGenesis
 from genesis_wp.const import KEY_ADDRESS, KEY_ENUM, KEY_REG_TYPE, MODEL_STIEBEL_WPE_I_071, REGISTERS
 
-from .harness import PROFILE_615
+from .harness import PROFILE_615, emulator_client
 from .register_sources import STIEBEL_WPE_I_071_ENUMS, THERMIA_GENESIS_17_1_ENUMS
 
 pytestmark = pytest.mark.fixture
@@ -22,7 +22,7 @@ SG_REGISTERS = ["dinput_smart_grid_1", "dinput_smart_grid_2", "holding_power_con
 
 
 async def update(emu, registers=SG_REGISTERS) -> ThermiaGenesis:
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
+    client = emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0)
     try:
         await client.async_update(only_registers=registers)
     finally:

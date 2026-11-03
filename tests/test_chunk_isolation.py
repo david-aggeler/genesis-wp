@@ -5,10 +5,10 @@ from __future__ import annotations
 import pytest
 from pymodbus.constants import ExcCodes
 
-from genesis_wp import ThermiaConnectionError, ThermiaGenesis
+from genesis_wp import ThermiaConnectionError
 from genesis_wp.const import KEY_ADDRESS, KEY_REG_TYPE, MODEL_STIEBEL_WPE_I_071, REG_INPUT, REGISTERS
 
-from .harness import PROFILE_615, WPE_I_KIND, expected_library_values, library_full_update
+from .harness import PROFILE_615, WPE_I_KIND, expected_library_values, library_full_update, emulator_client
 
 pytestmark = pytest.mark.fixture
 
@@ -33,7 +33,7 @@ async def _faulted_update(start_emulator, code: ExcCodes):
     start, count = await _chunk_with(start_emulator, 9)  # the chunk with condenser out (input 9)
     emu = await start_emulator(PROFILE_615)
     emu.inject_fault("input_registers", start, start + count - 1, code)
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
     try:
         data = await client.async_update()
     finally:
@@ -61,7 +61,7 @@ async def test_failed_chunk_registers_are_reported_as_unread(start_emulator):
 async def test_unread_registers_are_not_kept_from_a_previous_update(start_emulator):
     start, count = await _chunk_with(start_emulator, 9)
     emu = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
     try:
         first = await client.async_update()
         assert "input_condenser_out_temperature" in first and client.unread == set()
@@ -76,7 +76,7 @@ async def test_unread_registers_are_not_kept_from_a_previous_update(start_emulat
 
 async def test_a_lost_connection_still_fails_the_whole_update(start_emulator):
     emu = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, timeout=1)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0)
     await client.async_update(only_registers=["input_outdoor_temperature"])
     await emu.stop()
     with pytest.raises(ThermiaConnectionError):

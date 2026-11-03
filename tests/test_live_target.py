@@ -18,7 +18,7 @@ import pytest
 from genesis_wp import GenesisReadOnlyError, ThermiaConnectionError, ThermiaGenesis
 
 from .conftest import TEST_CLASSES
-from .harness import PROFILE_615, PROFILES, WPE_I_KIND
+from .harness import PROFILE_615, PROFILES, TEST_CLIENT_TIMEOUT, WPE_I_KIND
 from .plant import CHECKS, WRITE_METHODS, ReadOnlyTransportError, ReadOnlyUnit, read_snapshot
 from .targets import HOST_ENV, PORT_ENV, TARGET_ENV
 
@@ -63,7 +63,7 @@ async def test_plant_read_checks_hold_on_values_that_differ_from_the_capture(sta
     emu = await start_emulator(PROFILE_615, dynamics=True, seed=99, outdoor_temperature=-12.0)
     for _ in range(30):
         emu.step()
-    snapshot = await read_snapshot("emulator", emu.host, emu.port, delay=0)
+    snapshot = await read_snapshot("emulator", emu.host, emu.port, delay=0, timeout=TEST_CLIENT_TIMEOUT)
     assert snapshot.data["input_outdoor_temperature"] == -12.0  # the capture read 7.43 or so, not -12
     assert {check.__name__: check(snapshot) for check in CHECKS} == {check.__name__: [] for check in CHECKS}
 
@@ -115,7 +115,8 @@ async def test_library_write_through_the_live_transport_is_refused_before_connec
 
 async def test_live_transport_reads(start_emulator):
     emu = await start_emulator(PROFILE_615, host=STAND_IN)
-    snapshot = await read_snapshot("live", emu.host, emu.port, delay=0)
+    # The live transport, served by the emulator here: emulator-backed, so the test allowance applies.
+    snapshot = await read_snapshot("live", emu.host, emu.port, delay=0, timeout=TEST_CLIENT_TIMEOUT)
     assert snapshot.firmware == emu.profile.firmware["software"]
     assert all(r.function_code in (1, 2, 3, 4) for r in emu.requests)
     assert STAND_IN not in repr(snapshot) and STAND_IN not in repr(ReadOnlyUnit(emu.host, emu.port))

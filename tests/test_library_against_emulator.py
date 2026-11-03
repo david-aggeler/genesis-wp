@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from .harness import PROFILES, expected_library_values, library_full_update
+from .harness import PROFILES, expected_library_values, library_full_update, emulator_client
 
 pytestmark = pytest.mark.fixture
 
@@ -56,12 +56,10 @@ async def test_full_update_reports_the_profile_firmware(start_emulator, profile)
 
 async def test_second_full_update_on_the_same_client(start_emulator):
     """Inherited bug: the holding-116 skip check raised KeyError on every update after the first."""
-    from genesis_wp import ThermiaGenesis
-
     from .harness import PROFILE_615, WPE_I_KIND
 
     emu = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, max_registers=16)
+    client = emulator_client(emu.host, port=emu.port, kind=WPE_I_KIND, delay=0, max_registers=16)
     try:
         first = await client.async_update()
         second = await client.async_update()

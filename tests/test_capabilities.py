@@ -10,13 +10,13 @@ from genesis_wp.capabilities import (
 )
 from genesis_wp.const import MODEL_CALIBRA_RXT, MODEL_INVERTER, MODEL_MEGA, MODEL_STIEBEL_WPE_I_071, REGISTERS
 
-from .harness import PROFILE_615, PROFILES
+from .harness import PROFILE_615, PROFILES, emulator_client
 
 pytestmark = pytest.mark.fixture
 
 
 async def updated_client(emu, **options) -> ThermiaGenesis:
-    client = ThermiaGenesis(emu.host, port=emu.port, kind=emu.profile.model, delay=0, **options)
+    client = emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0, **options)
     try:
         await client.async_update()
     finally:
@@ -56,7 +56,7 @@ async def test_electric_meter_present_when_any_phase_voltage_is_above_0(start_em
 # DHF-REQ: genesis-wp/requirement-13  DHF-TEST: genesis-wp/ac-41
 async def test_smart_grid_unknown_until_its_input_is_seen_non_zero(start_emulator):
     first = await start_emulator(PROFILE_615)
-    client = ThermiaGenesis(first.host, port=first.port, kind=first.profile.model, delay=0)
+    client = emulator_client(first.host, port=first.port, kind=first.profile.model, delay=0)
     await client.async_update()
     await client.close()
     assert client.data["dinput_smart_grid_2"] in (0, False)
@@ -198,7 +198,7 @@ async def test_switched_off_module_is_switched_off_not_missing(start_emulator):
 # DHF-REQ: genesis-wp/requirement-13  DHF-TEST: genesis-wp/ac-65
 async def test_passive_cooling_seen_running_stays_installed(start_emulator):
     running = await start_emulator(PROFILE_615, overrides={("coils", 33): 1, ("discrete_inputs", 245): 1})
-    client = ThermiaGenesis(running.host, port=running.port, kind=running.profile.model, delay=0)
+    client = emulator_client(running.host, port=running.port, kind=running.profile.model, delay=0)
     await client.async_update()
     await client.close()
     assert client.capabilities["passive_cooling"].state == PRESENT
