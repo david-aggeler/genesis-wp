@@ -150,6 +150,13 @@ THERMIA_GENESIS_17_1_ENUMS = {
 # Source corrections (requirement-27, ac-106): (block, address) -> the source unit overridden, the
 # declared unit and the evidence. Each needs an owner decision.
 UNIT_CORRECTIONS = {
+    ("holding", 5): {
+        "source_unit": "K",
+        "unit": "°C",
+        "evidence": "Stiebel doc 372257-47978-0071 row 40006 names Raumtemperatur Sollwert"
+                    " (room temperature set point); fixtures 6.0.6 and 6.1.5 both read 20.5."
+                    " Owner decision 2026-11-03 (issue-32): absolute temperature, not a delta.",
+    },
     ("holding", 63): {
         "source_unit": "min",
         "unit": "s",
