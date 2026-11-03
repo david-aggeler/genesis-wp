@@ -201,12 +201,23 @@ def test_every_wpe_i_kind_fits_its_unit():
 def test_unit_corrections_name_an_address_unit_and_evidence():
     from .register_sources import UNIT_CORRECTIONS
 
-    assert set(UNIT_CORRECTIONS) == {("holding", 63)}
+    assert set(UNIT_CORRECTIONS) == {("holding", 63), ("holding", 5)}
     for key, correction in UNIT_CORRECTIONS.items():
         assert set(correction) == {"source_unit", "unit", "evidence"}, key
         assert correction["unit"] in UNITS and correction["evidence"], key
     assert UNIT_CORRECTIONS[("holding", 63)]["source_unit"] == "min"
     assert UNIT_CORRECTIONS[("holding", 63)]["unit"] == "s"
+    assert UNIT_CORRECTIONS[("holding", 5)]["source_unit"] == "K"
+    assert UNIT_CORRECTIONS[("holding", 5)]["unit"] == "°C"
+
+
+# DHF-TEST: genesis-wp/requirement-27  DHF-TEST: genesis-wp/ac-106
+def test_hc1_room_set_point_is_an_absolute_temperature():
+    from genesis_wp.const import ATTR_HOLDING_COMFORT_WHEEL_SETTING, KEY_KIND, KEY_UNIT
+
+    meta = REGISTERS[ATTR_HOLDING_COMFORT_WHEEL_SETTING]
+    assert meta[KEY_UNIT][MODEL_STIEBEL_WPE_I_071] == "°C"
+    assert meta[KEY_KIND][MODEL_STIEBEL_WPE_I_071] == "temperature"
 
 
 # DHF-REQ: genesis-wp/requirement-27  DHF-TEST: genesis-wp/ac-107
