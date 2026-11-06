@@ -150,6 +150,14 @@ THERMIA_GENESIS_17_1_ENUMS = {
 # Source corrections (requirement-27, ac-106): (block, address) -> the source unit overridden, the
 # declared unit and the evidence. Each needs an owner decision.
 UNIT_CORRECTIONS = {
+    ("input", 83): {
+        "source_unit": None,
+        "unit": "kWh",
+        "evidence": "Thermia Genesis 17.1 names the row Electric meter kWh total;"
+                    " sibling input 81 states kWh. Inputs 83/84 are a 32-bit LSB-first"
+                    " pair at scale 10. Owner decision 2026-11-06 (issue-34)."
+                    " No external meter is fitted, so this is not live-confirmed.",
+    },
     ("holding", 5): {
         "source_unit": "K",
         "unit": "°C",
