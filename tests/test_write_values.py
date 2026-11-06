@@ -6,6 +6,7 @@ Write paths run only against the emulator or the mock unit, never the real devic
 from __future__ import annotations
 
 import logging
+import asyncio
 
 import pytest
 
@@ -243,3 +244,45 @@ async def test_valid_when_write_uses_last_read_selector(mock_modbus_unit, caplog
         assert writes == []
         assert [r.getMessage() for r in caplog.records if r.name == "genesis_wp"][-1:] == [str(error.value)]
     assert mock_modbus_unit.read_events == reads
+
+
+# DHF-TEST: genesis-wp/requirement-33  DHF-TEST: genesis-wp/ac-170
+@pytest.mark.parametrize("boundary", ["connection", "delay"])
+@pytest.mark.parametrize("selector", [0, None, 1])
+async def test_conditional_write_rechecks_after_suspension(mock_modbus_unit, monkeypatch, boundary, selector):
+    source = "holding_outdoor_temperature_source"
+    client = _writer(mock_modbus_unit)
+    mock_modbus_unit.load_raw({"holding": {117: 1}})
+    await client.async_update(only_registers=[source])
+    writes = []
+    mock_modbus_unit.on_write(writes.append)
+    paused, resume = asyncio.Event(), asyncio.Event()
+    original = client._ensure_unit if boundary == "connection" else asyncio.sleep
+
+    async def suspend_write(*args):
+        if asyncio.current_task() is write_task:
+            paused.set()
+            await resume.wait()
+        return await original(*args)
+
+    if boundary == "connection":
+        monkeypatch.setattr(client, "_ensure_unit", suspend_write)
+    else:
+        monkeypatch.setattr("genesis_wp.asyncio.sleep", suspend_write)
+    write_task = asyncio.create_task(client.async_set("holding_outdoor_temperature_sensor", 7.35))
+    try:
+        await asyncio.wait_for(paused.wait(), timeout=2)
+        mock_modbus_unit.load_raw({"holding": {117: selector or 0}})
+        if selector is None:
+            from modbus_connection import ModbusExceptionError
+            mock_modbus_unit.fail_read(117, ModbusExceptionError(2), register_type="holding")
+        await client.async_update(only_registers=[source])
+    finally:
+        resume.set()
+    if selector == 1:
+        assert await write_task == 7.35
+        assert [(w.function_code, w.address, list(w.values)) for w in writes] == [(6, 118, [735])]
+    else:
+        with pytest.raises(GenesisInvalidWriteError):
+            await write_task
+        assert writes == []

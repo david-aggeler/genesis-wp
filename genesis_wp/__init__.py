@@ -431,6 +431,8 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         unit = await self._ensure_unit()
 
         await asyncio.sleep(self._delay)
+        # A concurrent update can invalidate the selector during either await above.
+        self._validate_write_condition(register, meta)
         failure = None
         try:
             await self._write(unit, meta, value, payload)
