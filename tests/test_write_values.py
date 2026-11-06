@@ -228,6 +228,7 @@ async def test_valid_when_write_uses_last_read_selector(mock_modbus_unit, caplog
             mock_modbus_unit.fail_read(117, ModbusExceptionError(2), register_type="holding")
         await client.async_update(only_registers=[source])
         await client.close()
+        await mock_modbus_unit.disconnect()
     writes = []
     mock_modbus_unit.on_write(writes.append)
     reads = list(mock_modbus_unit.read_events)
