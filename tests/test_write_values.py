@@ -6,6 +6,7 @@ Write paths run only against the emulator or the mock unit, never the real devic
 from __future__ import annotations
 
 import logging
+import asyncio
 
 import pytest
 
@@ -195,3 +196,93 @@ async def test_value_inside_scale_tolerance_writes_115(mock_modbus_unit):
 # DHF-TEST: genesis-wp/requirement-33  DHF-TEST: genesis-wp/ac-152
 async def test_value_outside_scale_tolerance_is_refused(mock_modbus_unit):
     await _assert_refused(mock_modbus_unit, INT_SCALE_100, 1.15 + 1e-5)
+
+
+# DHF-TEST: genesis-wp/requirement-33  DHF-TEST: genesis-wp/ac-169
+@pytest.mark.parametrize(("register", "value"), [
+    ("holding_operational_mode", 0), ("holding_enabled_immersion_heater", 1),
+])
+async def test_undeclared_enum_write_is_refused(mock_modbus_unit, caplog, register, value):
+    with caplog.at_level(logging.WARNING, logger="genesis_wp"):
+        error = await _assert_refused(mock_modbus_unit, register, value)
+    assert [r.getMessage() for r in caplog.records if r.name == "genesis_wp"] == [str(error)]
+
+
+# DHF-TEST: genesis-wp/requirement-33  DHF-TEST: genesis-wp/ac-169
+async def test_declared_enum_write_is_accepted(mock_modbus_unit):
+    writes = []
+    mock_modbus_unit.on_write(writes.append)
+    await _writer(mock_modbus_unit).async_set("holding_operational_mode", 2)
+    assert [(w.function_code, list(w.values)) for w in writes] == [(6, [2])]
+
+
+# DHF-TEST: genesis-wp/requirement-33  DHF-TEST: genesis-wp/ac-170
+@pytest.mark.parametrize("selector", ["unread", 0, 1, None, 2])
+async def test_valid_when_write_uses_last_read_selector(mock_modbus_unit, caplog, selector):
+    source = "holding_outdoor_temperature_source"
+    sensor = "holding_outdoor_temperature_sensor"
+    client = _writer(mock_modbus_unit)
+    if selector != "unread":
+        mock_modbus_unit.load_raw({"holding": {117: 0 if selector is None else selector}})
+        if selector is None:
+            from modbus_connection import ModbusExceptionError
+            mock_modbus_unit.fail_read(117, ModbusExceptionError(2), register_type="holding")
+        await client.async_update(only_registers=[source])
+        await client.close()
+        await mock_modbus_unit.disconnect()
+    writes = []
+    mock_modbus_unit.on_write(writes.append)
+    reads = list(mock_modbus_unit.read_events)
+    if selector == 1:
+        await client.async_set(sensor, 7.35)
+        assert [(w.function_code, w.address, list(w.values)) for w in writes] == [(6, 118, [735])]
+    else:
+        with caplog.at_level(logging.WARNING, logger="genesis_wp"):
+            with pytest.raises(GenesisInvalidWriteError) as error:
+                await client.async_set(sensor, 7.35)
+        assert not mock_modbus_unit.connected
+        assert writes == []
+        assert [r.getMessage() for r in caplog.records if r.name == "genesis_wp"][-1:] == [str(error.value)]
+    assert mock_modbus_unit.read_events == reads
+
+
+# DHF-TEST: genesis-wp/requirement-33  DHF-TEST: genesis-wp/ac-170
+@pytest.mark.parametrize("boundary", ["connection", "delay"])
+@pytest.mark.parametrize("selector", [0, None, 1])
+async def test_conditional_write_rechecks_after_suspension(mock_modbus_unit, monkeypatch, boundary, selector):
+    source = "holding_outdoor_temperature_source"
+    client = _writer(mock_modbus_unit)
+    mock_modbus_unit.load_raw({"holding": {117: 1}})
+    await client.async_update(only_registers=[source])
+    writes = []
+    mock_modbus_unit.on_write(writes.append)
+    paused, resume = asyncio.Event(), asyncio.Event()
+    original = client._ensure_unit if boundary == "connection" else asyncio.sleep
+
+    async def suspend_write(*args):
+        if asyncio.current_task() is write_task:
+            paused.set()
+            await resume.wait()
+        return await original(*args)
+
+    if boundary == "connection":
+        monkeypatch.setattr(client, "_ensure_unit", suspend_write)
+    else:
+        monkeypatch.setattr("genesis_wp.asyncio.sleep", suspend_write)
+    write_task = asyncio.create_task(client.async_set("holding_outdoor_temperature_sensor", 7.35))
+    try:
+        await asyncio.wait_for(paused.wait(), timeout=2)
+        mock_modbus_unit.load_raw({"holding": {117: selector or 0}})
+        if selector is None:
+            from modbus_connection import ModbusExceptionError
+            mock_modbus_unit.fail_read(117, ModbusExceptionError(2), register_type="holding")
+        await client.async_update(only_registers=[source])
+    finally:
+        resume.set()
+    if selector == 1:
+        assert await write_task == 7.35
+        assert [(w.function_code, w.address, list(w.values)) for w in writes] == [(6, 118, [735])]
+    else:
+        with pytest.raises(GenesisInvalidWriteError):
+            await write_task
+        assert writes == []

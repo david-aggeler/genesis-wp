@@ -105,7 +105,7 @@ def _coil_payload(register, value) -> bool:
 
 
 # DHF-REQ: genesis-wp/requirement-33
-def _holding_payload(register, meta, value) -> int:
+def _holding_payload(register, meta, value, model) -> int:
     """The FC6 word for a holding write: the rounded scaled value, refused unless exact and in range."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise _refuse(GenesisInvalidWriteError, f"refusing to write {register}: {value!r} is not a number")
@@ -123,6 +123,11 @@ def _holding_payload(register, meta, value) -> int:
     if not low <= word <= high:
         raise _refuse(GenesisInvalidWriteError,
             f"refusing to write {register}: {value!r} scales to {word}, outside {low}..{high} for {meta[KEY_DATATYPE]}"
+        )
+    table = meta.get(KEY_ENUM, {}).get(model)
+    if table is not None and word not in table:
+        raise _refuse(GenesisInvalidWriteError,
+            f"refusing to write {register}: raw value {word} is not declared for model {model}"
         )
     return num_to_bin(word)
 
@@ -420,11 +425,14 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
         if meta[KEY_REG_TYPE] == REG_COIL:
             payload = _coil_payload(register, value)
         else:
-            payload = _holding_payload(register, meta, value)
+            payload = _holding_payload(register, meta, value, self._kind)
 
+        self._validate_write_condition(register, meta)
         unit = await self._ensure_unit()
 
         await asyncio.sleep(self._delay)
+        # A concurrent update can invalidate the selector during either await above.
+        self._validate_write_condition(register, meta)
         failure = None
         try:
             await self._write(unit, meta, value, payload)
@@ -443,6 +451,18 @@ class ThermiaGenesis:  # pylint:disable=too-many-instance-attributes
             # Raised outside the except block, so the chain carries no transport text (requirement-9).
             raise self._connection_failed("Failed to write to", failure) from None
         return value
+
+    # DHF-REQ: genesis-wp/requirement-33
+    def _validate_write_condition(self, register, meta):
+        """Refuse a conditional write unless the last read proves its selector holds."""
+        condition = meta.get(KEY_VALID_WHEN, {}).get(self._kind)
+        if condition is None:
+            return
+        selector, required = condition
+        if self._raw.get(selector) != required:
+            raise _refuse(GenesisInvalidWriteError,
+                f"refusing to write {register}: selector {selector} must read raw value {required}"
+            )
 
     @staticmethod
     async def _write(unit, meta, value, payload) -> None:
