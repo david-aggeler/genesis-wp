@@ -109,11 +109,11 @@ def test_holding_307_308_311_312_are_mega_only_at_thermia_scale():
 UNITS = {"°C", "K", "bar", "%", "W", "kW", "kWh", "A", "V", "h", "s", "rpm", None}
 KINDS = {
     "temperature", "temperature_delta", "pressure", "percent", "power", "energy", "current",
-    "voltage", "duration", "speed", "count", "state",
+    "voltage", "duration", "speed", "count", "dimensionless", "state",
 }
 # Source unit -> declared unit (ac-106): non-quantities and no unit are None, bar(g) is bar.
 SOURCE_UNIT_MAP = {"on/off": None, "active/inactive": None, "enum": None, "bar(g)": "bar", "step": None}
-# Kind of a register with a physical unit; a register without one is a count or a state.
+# Kind of a register with a physical unit; unit-less kinds include count, dimensionless and state.
 KIND_OF_UNIT = {
     "°C": "temperature", "K": "temperature_delta", "bar": "pressure", "%": "percent", "W": "power",
     "kW": "power", "kWh": "energy", "A": "current", "V": "voltage", "h": "duration", "s": "duration",
@@ -191,7 +191,7 @@ def test_every_wpe_i_kind_fits_its_unit():
         if unit is not None:
             assert kind == KIND_OF_UNIT[unit], (name, unit, kind)
             continue
-        assert kind in ("count", "state"), (name, kind)
+        assert kind in ("count", "dimensionless", "state"), (name, kind)
         enumerated = meta[KEY_DATATYPE] in (TYPE_BIT, TYPE_STATUS) or model in meta.get(KEY_ENUM, {})
         if enumerated or _wpe_i_source_unit(meta) in NON_QUANTITY_SOURCE_UNITS:
             assert kind == "state", (name, kind)
@@ -305,3 +305,13 @@ def test_german_row_text_sits_only_on_stiebel_sources():
         else:
             assert fact["name_de"] is None, key
 
+
+
+# DHF-TEST: genesis-wp/requirement-27 genesis-wp/ac-106
+def test_dimensionless_kind_is_declared_exactly_for_calculated_heating_demand():
+    from genesis_wp.const import KEY_KIND
+
+    assert {
+        name for name, meta in _wpe_i_registers().items()
+        if meta[KEY_KIND][MODEL_STIEBEL_WPE_I_071] == "dimensionless"
+    } == {"input_calculated_heating_demand"}
