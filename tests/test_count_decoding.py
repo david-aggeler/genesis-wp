@@ -84,3 +84,19 @@ async def test_models_without_a_declared_kind_keep_the_float(mock_modbus_unit):
     client = ThermiaGenesis(unit=mock_modbus_unit, kind=model, delay=0)
     data = await client.async_update(only_registers=[AVAILABLE_GEARS])
     assert type(data[AVAILABLE_GEARS]) is float and data[AVAILABLE_GEARS] == 12.0
+
+
+# DHF-TEST: genesis-wp/requirement-27 genesis-wp/ac-105
+@pytest.mark.parametrize(("profile", "expected"), list(zip(PROFILES, (-0.28, 0.71))))
+async def test_calculated_heating_demand_keeps_float_without_count_debug(start_emulator, caplog, profile, expected):
+    emu = await start_emulator(profile)
+    with caplog.at_level(logging.DEBUG, logger="genesis_wp"):
+        got = await library_full_update(emu)
+    name = "input_calculated_heating_demand"
+    assert type(got[name]) is float
+    assert got[name] == expected
+    assert not [
+        r.getMessage() for r in caplog.records
+        if r.name == "genesis_wp" and r.levelno == logging.DEBUG
+        and name in r.getMessage() and "non-integral" in r.getMessage()
+    ]
