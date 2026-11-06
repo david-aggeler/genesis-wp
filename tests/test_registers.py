@@ -201,7 +201,7 @@ def test_every_wpe_i_kind_fits_its_unit():
 def test_unit_corrections_name_an_address_unit_and_evidence():
     from .register_sources import UNIT_CORRECTIONS
 
-    assert set(UNIT_CORRECTIONS) == {("holding", 63), ("holding", 5)}
+    assert set(UNIT_CORRECTIONS) == {("holding", 63), ("holding", 5), ("input", 83)}
     for key, correction in UNIT_CORRECTIONS.items():
         assert set(correction) == {"source_unit", "unit", "evidence"}, key
         assert correction["unit"] in UNITS and correction["evidence"], key
@@ -209,6 +209,8 @@ def test_unit_corrections_name_an_address_unit_and_evidence():
     assert UNIT_CORRECTIONS[("holding", 63)]["unit"] == "s"
     assert UNIT_CORRECTIONS[("holding", 5)]["source_unit"] == "K"
     assert UNIT_CORRECTIONS[("holding", 5)]["unit"] == "°C"
+    assert UNIT_CORRECTIONS[("input", 83)]["source_unit"] is None
+    assert UNIT_CORRECTIONS[("input", 83)]["unit"] == "kWh"
 
 
 # DHF-TEST: genesis-wp/requirement-27  DHF-TEST: genesis-wp/ac-106
@@ -218,6 +220,15 @@ def test_hc1_room_set_point_is_an_absolute_temperature():
     meta = REGISTERS[ATTR_HOLDING_COMFORT_WHEEL_SETTING]
     assert meta[KEY_UNIT][MODEL_STIEBEL_WPE_I_071] == "°C"
     assert meta[KEY_KIND][MODEL_STIEBEL_WPE_I_071] == "temperature"
+
+
+# DHF-TEST: genesis-wp/requirement-27 genesis-wp/ac-106
+def test_electric_meter_total_is_energy_in_kwh():
+    from genesis_wp.const import ATTR_INPUT_ELECTRIC_METER_KWH_TOTAL, KEY_KIND, KEY_UNIT
+
+    meta = REGISTERS[ATTR_INPUT_ELECTRIC_METER_KWH_TOTAL]
+    assert meta[KEY_UNIT][MODEL_STIEBEL_WPE_I_071] == "kWh"
+    assert meta[KEY_KIND][MODEL_STIEBEL_WPE_I_071] == "energy"
 
 
 # DHF-REQ: genesis-wp/requirement-27  DHF-TEST: genesis-wp/ac-107
