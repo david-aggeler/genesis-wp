@@ -7,7 +7,8 @@ KEY_REG_TYPE = 'register_type'
 KEY_BITS = 'bits'
 KEY_DATATYPE = 'datatype'
 # Raw value meaning "sensor not fitted", per model: {MODEL_...: raw}. The library reports None for it.
-# Declared only where a source documents it (WPE-I: Stiebel doc 372257-47978-0071 register table).
+# Declared only where a source documents it (WPE-I: Stiebel doc 372257-47978-0071 register table), or
+# through a source correction the owner decided, commented at the register (WPE-I: input 45).
 KEY_NOT_FITTED = 'not_fitted'
 # Condition under which a register carries a value, per model: {MODEL_...: (selector register, raw)}.
 # The library reports None unless the selector is in the same update and reads that raw value.
@@ -1018,8 +1019,11 @@ REGISTERS = {
         { KEY_ADDRESS: 43, KEY_REG_TYPE: REG_INPUT, KEY_SCALE: 100, KEY_DATATYPE: TYPE_INT, MODEL_MEGA: True, MODEL_INVERTER: True, MODEL_CALIBRA_RXT: True, MODEL_STIEBEL_WPE_I_071: True, KEY_SOURCE: { MODEL_STIEBEL_WPE_I_071: SOURCE_MODEL_DOC }, KEY_UNIT: { MODEL_STIEBEL_WPE_I_071: UNIT_PERCENT }, KEY_KIND: { MODEL_STIEBEL_WPE_I_071: KIND_PERCENT }, KEY_NAME: { MODEL_STIEBEL_WPE_I_071: 'Heating circuit 2 mixing valve control' }, KEY_NAME_DE: { MODEL_STIEBEL_WPE_I_071: 'Ansteuerung Mischventil Heizkreis 2' } },
     ATTR_INPUT_BRINE_CIRCULATION_PUMP_SPEED:
         { KEY_ADDRESS: 44, KEY_REG_TYPE: REG_INPUT, KEY_SCALE: 100, KEY_DATATYPE: TYPE_INT, MODEL_MEGA: True, MODEL_INVERTER: True, MODEL_CALIBRA_RXT: True, MODEL_STIEBEL_WPE_I_071: True, KEY_SOURCE: { MODEL_STIEBEL_WPE_I_071: SOURCE_MODEL_DOC }, KEY_UNIT: { MODEL_STIEBEL_WPE_I_071: UNIT_PERCENT }, KEY_KIND: { MODEL_STIEBEL_WPE_I_071: KIND_PERCENT } },
+    # Source correction: no source declares a sentinel for input 45 (the Stiebel doc omits the row);
+    # 20000 is the not-fitted value of every declared WPE-I temperature. Owner decision 2026-11-19
+    # (plant without hot gas recovery reads 20000 on fw 6.0.6 and 6.1.5; issue-4).
     ATTR_INPUT_HGW_SUPPLY_LINE_TEMPERATURE:
-        { KEY_ADDRESS: 45, KEY_REG_TYPE: REG_INPUT, KEY_SCALE: 100, KEY_DATATYPE: TYPE_INT, MODEL_MEGA: False, MODEL_INVERTER: True, MODEL_CALIBRA_RXT: True, MODEL_STIEBEL_WPE_I_071: True, KEY_SOURCE: { MODEL_STIEBEL_WPE_I_071: SOURCE_PLATFORM_DOC }, KEY_UNIT: { MODEL_STIEBEL_WPE_I_071: UNIT_CELSIUS }, KEY_KIND: { MODEL_STIEBEL_WPE_I_071: KIND_TEMPERATURE } },
+        { KEY_ADDRESS: 45, KEY_REG_TYPE: REG_INPUT, KEY_SCALE: 100, KEY_DATATYPE: TYPE_INT, MODEL_MEGA: False, MODEL_INVERTER: True, MODEL_CALIBRA_RXT: True, MODEL_STIEBEL_WPE_I_071: True, KEY_NOT_FITTED: { MODEL_STIEBEL_WPE_I_071: 20000 }, KEY_SOURCE: { MODEL_STIEBEL_WPE_I_071: SOURCE_PLATFORM_DOC }, KEY_UNIT: { MODEL_STIEBEL_WPE_I_071: UNIT_CELSIUS }, KEY_KIND: { MODEL_STIEBEL_WPE_I_071: KIND_TEMPERATURE } },
     ATTR_INPUT_HOT_WATER_DIRECTIONAL_VALVE_POSITION:
         { KEY_ADDRESS: 47, KEY_REG_TYPE: REG_INPUT, KEY_SCALE: 1, KEY_DATATYPE: TYPE_INT, MODEL_MEGA: True, MODEL_INVERTER: False, MODEL_CALIBRA_RXT: True, MODEL_STIEBEL_WPE_I_071: True, KEY_SOURCE: { MODEL_STIEBEL_WPE_I_071: SOURCE_PLATFORM_DOC }, KEY_UNIT: { MODEL_STIEBEL_WPE_I_071: UNIT_PERCENT }, KEY_KIND: { MODEL_STIEBEL_WPE_I_071: KIND_PERCENT } },
     ATTR_INPUT_COMPRESSOR_OPERATING_HOURS:

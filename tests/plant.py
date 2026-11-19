@@ -138,11 +138,7 @@ CONDITIONAL = {"holding_fixed_system_supply_set_point": "coil_enable_fixed_syste
 #: register range (the register map has none); a sanity bound a healthy plant stays inside.
 PLAUSIBLE_TEMPERATURE = (-50.0, 100.0)
 #: Registers that read implausible values for a known, recorded reason.
-KNOWN_IMPLAUSIBLE = {
-    # Platform register the Stiebel document does not list (platform_doc); no source declares a
-    # sentinel, so the hot-gas module's absence reads as 200.0 (issue-4).
-    "input_hgw_supply_line_temperature": "issue-4",
-}
+KNOWN_IMPLAUSIBLE: dict[str, str] = {}
 
 #: Outdoor temperatures [°C] of the seven heat curve points, inputs 20-26 (formal_review-3).
 CURVE_X = (17.0, 10.0, 5.0, 0.0, -5.0, -15.0, -25.0)

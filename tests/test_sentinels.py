@@ -39,12 +39,21 @@ async def test_scale_10_sentinel_2000_decodes_to_none(start_emulator):
 
 # DHF-REQ: genesis-wp/requirement-3  DHF-TEST: genesis-wp/ac-9
 async def test_register_without_declared_sentinel_keeps_200(start_emulator):
-    emu = await start_emulator(PROFILE_615)
-    # Hot-gas supply (input 45) reads raw 20000 but no source declares a sentinel for it.
+    # No capture holds an undeclared 20000 since input 45 declares one, so the emulator serves
+    # raw 20000 on the discharge pipe (input 7), which declares none.
+    assert KEY_NOT_FITTED not in REGISTERS["input_discharge_pipe_temperature"]
+    emu = await start_emulator(PROFILE_615, overrides={("input_registers", 7): 20000})
+    data = await update(emu, "input_discharge_pipe_temperature")
+    assert data["input_discharge_pipe_temperature"] == 200.0
+
+
+# Source correction, owner decision 2026-11-19 (issue-4): the plant has no hot gas recovery.
+@pytest.mark.parametrize("profile", [PROFILE_606, PROFILE_615])
+async def test_hot_gas_supply_sentinel_20000_decodes_to_none(start_emulator, profile):
+    emu = await start_emulator(profile)
     assert emu.profile.blocks["input_registers"].value(45) == 20000
-    assert KEY_NOT_FITTED not in REGISTERS["input_hgw_supply_line_temperature"]
     data = await update(emu, "input_hgw_supply_line_temperature")
-    assert data["input_hgw_supply_line_temperature"] == 200.0
+    assert data["input_hgw_supply_line_temperature"] is None
 
 
 async def test_declared_register_with_a_real_reading_keeps_its_value(start_emulator):

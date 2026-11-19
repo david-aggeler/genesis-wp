@@ -74,7 +74,7 @@ async def test_selection_never_touches_the_packaged_profile(start_emulator):
     ("hot_water", True), ("hot_water", False), ("heating_circuit_2", True), ("heating_circuit_2", False),
     ("buffer_tank", True), ("buffer_tank", False), ("pool", True), ("pool", False),
     ("active_cooling", True), ("active_cooling", False), ("passive_cooling", True),
-    ("hot_gas_recovery", True), ("room_sensor", True), ("room_sensor", False),
+    ("hot_gas_recovery", True), ("hot_gas_recovery", False), ("room_sensor", True), ("room_sensor", False),
     ("electric_meter", True), ("electric_meter", False), ("smart_grid", True), ("internal_heater", True),
     ("external_heater", True), ("ksm", True),
 ])
@@ -84,7 +84,7 @@ async def test_every_selectable_capability_is_detected_as_selected(start_emulato
 
 
 @pytest.mark.parametrize("name", ["hot_water", "heating_circuit_2", "buffer_tank", "pool", "active_cooling", "room_sensor",
-                                  "electric_meter"])
+                                  "electric_meter", "hot_gas_recovery"])
 async def test_switched_off_modules_stay_absent_with_dynamics(start_emulator, name):
     """Dynamics never tick a sensor the selection set to not fitted (issue-12)."""
     emu = await start_emulator(PROFILE_615, capabilities={name: False}, dynamics=True)
@@ -128,7 +128,7 @@ async def test_passive_cooling_on_makes_cooling_present(start_emulator):
     assert caps["cooling"].state == PRESENT
 
 
-@pytest.mark.parametrize("name", ["passive_cooling", "hot_gas_recovery", "cooling"])
+@pytest.mark.parametrize("name", ["passive_cooling", "cooling"])
 def test_off_is_rejected_where_detection_cannot_show_absence(name):
     with pytest.raises(CapabilityError, match="cannot be switched off"):
         Emulator(get_profile(PROFILE_615), port=0, capabilities={name: False})
