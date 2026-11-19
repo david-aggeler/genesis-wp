@@ -36,8 +36,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 # Sensors the owner's unit does not have fitted (installer wiring: T34 room, T36/T37 tap
-# water, no pool, no cooling circuit) that the Stiebel document declares a "not fitted"
-# sentinel for. The capture decoded them as 200.0; the library now reports None.
+# water, no pool, no cooling circuit, no hot gas recovery) that the register map declares a
+# "not fitted" sentinel for: the Stiebel document, and for input 45 a source correction (owner
+# decision 2026-11-19). The capture decoded them as 200.0; the library now reports None.
 NOT_FITTED_ON_UNIT = frozenset({
     "input_tap_water_top_temperature",
     "input_tap_water_lower_temperature",
@@ -46,6 +47,7 @@ NOT_FITTED_ON_UNIT = frozenset({
     "input_pool_return_line_temperature",
     "input_cooling_circuit_supply_line_temperature",
     "input_room_temperature_sensor",
+    "input_hgw_supply_line_temperature",
 })
 
 # Registers the register map declares valid only while a selector holds a documented value

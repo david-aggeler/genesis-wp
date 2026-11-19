@@ -128,9 +128,10 @@ async def test_captured_plant_capabilities(start_emulator):
     }
     # Switched off without a sensor that proves absence: unknown, not absent (design_decision-2, 2026-10-27)
     assert {n for n, s in states.items() if s == UNKNOWN} == {
-        "smart_grid", "external_heater", "passive_cooling", "hot_gas_recovery", "cooling",
+        "smart_grid", "external_heater", "passive_cooling", "cooling",
     }
-    for name in ("hot_water", "pool", "active_cooling", "room_sensor", "electric_meter"):
+    # input 45 reads its not-fitted sentinel (source correction, owner decision 2026-11-19)
+    for name in ("hot_water", "pool", "active_cooling", "room_sensor", "electric_meter", "hot_gas_recovery"):
         assert states[name] == ABSENT, name
 
 

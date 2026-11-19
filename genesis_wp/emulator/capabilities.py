@@ -40,6 +40,7 @@ SYNTHETIC_TEMPERATURES = {
     "input_pool_return_line_temperature": 25.0,
     "input_cooling_circuit_supply_line_temperature": 18.0,
     "input_room_temperature_sensor": 21.0,
+    "input_hgw_supply_line_temperature": 55.0,
 }
 METER_PHASE_VOLTAGE = 230.0  # [V], line to neutral; line-to-line 400 V does not fit the int16 register at scale 100
 
