@@ -20,6 +20,10 @@ time constant does not depend on the poll rate. Without a calculated value, a ca
 estimator reports factor × pump speed ("pump_speed"); an uncalibrated one reports None
 ("unknown"). A value that is not finite or lies outside 0 … ``max_flow`` is never reported.
 
+A consumer that persisted :attr:`FlowEstimator.calibration` can pass it back as the
+``calibration`` seed after a restart: the seeded estimator reports factor × pump speed right
+away, and its first calculated window blends into the seed like into a learned factor.
+
 The module performs no Modbus I/O: the consumer feeds it the dicts ``ThermiaGenesis``
 returns, with a monotonic timestamp, and owns the estimator's state. It never raises on data.
 """
@@ -162,7 +166,8 @@ class FlowEstimator:
     """Windowed energy-balance flow estimate for one loop; feed it with :meth:`add`."""
 
     def __init__(self, loop: Loop, fluid: Fluid | None = None, window_s: float = 300,
-                 min_delta_t: float = 2.0, max_flow: float = 60.0, max_gap_s: float = 120.0) -> None:
+                 min_delta_t: float = 2.0, max_flow: float = 60.0, max_gap_s: float = 120.0,
+                 calibration: float | None = None) -> None:
         if not isinstance(loop, Loop):
             raise ValueError(f"loop must be a Loop, got {loop!r}")
         if fluid is not None and not isinstance(fluid, Fluid):
@@ -184,10 +189,21 @@ class FlowEstimator:
         self.max_gap_s = float(max_gap_s)
         self._window: deque[_Sample] = deque()
         self._last_timestamp: float | None = None
-        self._calibration: float | None = None
+        self._calibration: float | None = self._seed(calibration)
         self._calibrated_at: float | None = None
         self._skip_run = False
         self._estimate = FlowEstimate(None, UNKNOWN, None)
+
+    def _seed(self, calibration) -> float | None:
+        """A calibration seed [L/min per %], validated like a learned factor (requirement-31)."""
+        if calibration is None:
+            return None
+        seed = _finite(calibration)
+        if seed is None or seed <= 0 or seed * PUMP_RANGE[1] > self.max_flow:
+            raise ValueError(f"calibration must be a positive finite number with calibration × "
+                             f"{PUMP_RANGE[1]:.0f} % ≤ max_flow {self.max_flow}, got {calibration!r}")
+        _LOGGER.debug("%s flow: calibration seeded at %.4f L/min per %%", self.loop.name, seed)
+        return seed
 
     @property
     def calibration(self) -> float | None:
