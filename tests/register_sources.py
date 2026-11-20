@@ -230,6 +230,18 @@ WPE_I_071_LABELS = {
         "name_de": None,
         "source": f"{THERMIA} 5.2 Mix valve 1, 10210: Mix valve 1 circulation pump control signal (EM)",
     },
+    # Heating limit (Heizgrenze), owner ruling 2026-11-20 (requirement-28): an outdoor-temperature threshold,
+    # not a calendar season. English per owner; name_de stays the Stiebel row text.
+    ("holding", 16): {
+        "name": "Heating limit outdoor temperature",
+        "name_de": "Außentemperatur für Sommerbetrieb",
+        "source": f"{STIEBEL} 2.2, 40017",
+    },
+    ("dinput", 220): {
+        "name": "Outdoor temperature below heating limit",
+        "name_de": None,
+        "source": f"{THERMIA} 5.1 Heating system, 10221: Heating season (winter) active",
+    },
     **{
         ("holding", address): {
             "name": f"Heating circuit 2 supply set temperature at {outdoor} °C outdoor",
