@@ -273,7 +273,8 @@ def test_reported_wpe_i_registers_carry_the_labels_of_their_source_rows():
         [("input", a) for a in (18, 40, 43, 147)] + [("dinput", a) for a in (36, 60, 209)]
         + [("holding", a) for a in range(109, 116)]
     )
-    assert set(WPE_I_071_LABELS) == set(reported)
+    # Labels beyond the reported set (inputs 12 and 41, requirement-44 origin) are allowed; ac-128 covers them.
+    assert set(reported) <= set(WPE_I_071_LABELS)
     model = MODEL_STIEBEL_WPE_I_071
     registers = {(m[KEY_REG_TYPE], m[KEY_ADDRESS]): m for m in _wpe_i_registers().values()}
     for key, fact in WPE_I_071_LABELS.items():
@@ -326,3 +327,41 @@ def test_dimensionless_kind_is_declared_exactly_for_calculated_heating_demand():
         name for name, meta in _wpe_i_registers().items()
         if meta[KEY_KIND][MODEL_STIEBEL_WPE_I_071] == "dimensionless"
     } == {"input_calculated_heating_demand"}
+
+
+# DHF-REQ: genesis-wp/requirement-44  DHF-TEST: genesis-wp/ac-173
+def test_sensor_tags_and_locations_are_well_formed_and_sit_only_on_enabled_registers():
+    import re
+
+    from genesis_wp.const import KEY_LOCATION, KEY_SENSOR, LOCATIONS
+
+    seen: dict[str, set[str]] = {}
+    for name, meta in REGISTERS.items():
+        sensors, locations = meta.get(KEY_SENSOR, {}), meta.get(KEY_LOCATION, {})
+        assert isinstance(sensors, dict) and isinstance(locations, dict), name
+        assert set(sensors) == set(locations), name
+        for model, tag in sensors.items():
+            assert meta.get(model) is True, (name, model)
+            assert isinstance(tag, str) and re.fullmatch(r"T\d{2}", tag), (name, tag)
+            assert locations[model] in LOCATIONS, (name, locations[model])
+            assert tag not in seen.setdefault(model, set()), (name, model, tag)
+            seen[model].add(tag)
+    assert seen, "no register declares a sensor"
+
+
+# DHF-REQ: genesis-wp/requirement-44  DHF-TEST: genesis-wp/ac-174
+def test_wpe_i_sensor_registers_carry_their_sourced_tag_and_location():
+    from genesis_wp.const import KEY_ADDRESS, KEY_LOCATION, KEY_REG_TYPE, KEY_SENSOR
+
+    from .register_sources import WPE_I_071_SENSORS
+
+    model = MODEL_STIEBEL_WPE_I_071
+    expected = {("input", a) for a in (12, 13, 15, 16, 40, 41, 121)}
+    assert set(WPE_I_071_SENSORS) == expected
+    registers = {(m[KEY_REG_TYPE], m[KEY_ADDRESS]): m for m in _wpe_i_registers().values()}
+    declared = {key for key, meta in registers.items() if model in meta.get(KEY_SENSOR, {})}
+    assert declared == expected
+    for key, fact in WPE_I_071_SENSORS.items():
+        assert fact["source"].strip(), key
+        assert registers[key][KEY_SENSOR][model] == fact["sensor"], key
+        assert registers[key][KEY_LOCATION][model] == fact["location"], key
