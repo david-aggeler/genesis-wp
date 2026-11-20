@@ -50,7 +50,44 @@ estimate = condenser.add(time.monotonic(), await thermia.async_update())
 estimate.value, estimate.source  # L/min or None; "calculated", "pump_speed" or "unknown"
 ```
 
-Use a monotonic clock: a timestamp earlier than the previous one restarts the window, a repeated one is dropped. A value is `calculated` once the window covers `window_s` of uninterrupted running with a mean ΔT of at least `min_delta_t`. Uninterrupted means every sample has the compressor running, a loop heat above 0 and a ΔT above 0, with no more than `max_gap_s` between samples; anything else restarts the window. `max_gap_s` must be shorter than `window_s`, else the constructor raises `ValueError`. Each window calibrates a flow per pump percent (the window's flow over its mean pump speed), unless that factor × 100 % exceeds `max_flow`, in which case the window is skipped; without one, a calibrated estimator reports factor × pump speed (`pump_speed`), otherwise `None` (`unknown`). To skip relearning after a restart, persist `estimator.calibration` and pass it back as `calibration=`: the seeded estimator reports `pump_speed` at once and its first window blends into the seed; a seed that is not finite, not positive or whose value at 100 % exceeds `max_flow` raises `ValueError`. A value that is not finite or lies outside 0 … `max_flow` is never reported, and bad data never raises. Assumptions: the brine fill is not documented, so its fluid is a parameter; input 157 is probably computed by the controller from its own flow sensor, so the condenser estimate largely mirrors that sensor. The room loop (heating circuit 2) and the flow to the buffer cannot be derived: there is no room return sensor. With dynamics on, the emulator serves the inlet temperatures (inputs 8 and 10) from a configured flow per pump percent (`heating.CONDENSER_FLOW_PER_PERCENT`, `heating.BRINE_FLOW_PER_PERCENT`).
+Use a monotonic clock: a timestamp earlier than the previous one restarts the window, a repeated one is dropped. A value is `calculated` once the window covers `window_s` of uninterrupted running with a mean ΔT of at least `min_delta_t`. Uninterrupted means every sample has the compressor running, a loop heat above 0 and a ΔT above 0, with no more than `max_gap_s` between samples; anything else restarts the window. `max_gap_s` must be shorter than `window_s`, else the constructor raises `ValueError`. Each window calibrates a flow per pump percent (the window's flow over its mean pump speed), unless that factor × 100 % exceeds `max_flow`, in which case the window is skipped; without one, a calibrated estimator reports factor × pump speed (`pump_speed`), otherwise `None` (`unknown`). To skip relearning after a restart, persist `estimator.calibration` and pass it back as `calibration=`: the seeded estimator reports `pump_speed` at once and its first window blends into the seed; a seed that is not finite, not positive or whose value at 100 % exceeds `max_flow` raises `ValueError`. A value that is not finite or lies outside 0 … `max_flow` is never reported, and bad data never raises. Assumptions: the brine fill is not documented, so its fluid is a parameter; input 157 is probably computed by the controller from its own flow sensor, so the condenser estimate largely mirrors that sensor. The flows of the room loop (heating circuit 2) and into the buffer cannot be derived: there is no room return sensor. The room loop's return temperature can be estimated (next section). With dynamics on, the emulator serves the inlet temperatures (inputs 8 and 10) from a configured flow per pump percent (`heating.CONDENSER_FLOW_PER_PERCENT`, `heating.BRINE_FLOW_PER_PERCENT`).
+
+### Derived heating circuit 2 return temperature
+
+No sensor measures the heating circuit 2 return. `HeatingCircuit2ReturnEstimator` estimates it from a buffer energy balance over a sliding window. The room loop gets the condenser heat minus what the buffer stores:
+
+```
+Q_hc2 [kW] = Q_condenser − V · ρ · cp · d mean(T31, T33)/dt
+T_return   = mean T32 − Q_hc2 / (flow / 60 · ρ · cp)
+```
+
+The balance only holds for a plant where every bit of condenser heat goes into the buffer or to heating circuit 2: no hot water and no other consumer. The buffer volume [L] and the circuit flow [L/min] are this plant's constants. No register reports them, so they have no defaults:
+
+```python
+from genesis_wp.derived import CONDENSER, FlowEstimator, HeatingCircuit2ReturnEstimator
+
+condenser = FlowEstimator(CONDENSER)
+hc2 = HeatingCircuit2ReturnEstimator(300.0, 18.3)  # fluid=WATER, window_s=1800, edge_s=180, max_gap_s=120
+data = await thermia.async_update()
+now = time.monotonic()
+estimate = hc2.add(now, data, condenser.add(now, data).value)
+estimate.value, estimate.heat  # °C and kW, or None and None
+```
+
+- **Condenser heat:** condenser flow × ρ · cp × (T9 − T8) while discrete input 199 (compressor control signal) is on, and 0 while it is off. Each interval is weighted by its time.
+- **Buffer slope:** the change of mean(T31, T33) between the means of the window's first and last `edge_s`.
+- **T32:** the time-weighted window mean.
+- **Window restart:** one sample restarts the window if any of these hold:
+  - discrete input 209 (circuit 2 pump signal) is off;
+  - coil 33 (passive cooling enabled) or discrete input 245 (passive cooling active) is on;
+  - any of those signals is unknown;
+  - T31, T33 or T32 is missing;
+  - the compressor is running and T8, T9 or the condenser flow is missing.
+
+  So do a gap above `max_gap_s` and a clock step back.
+- **No value:** until `window_s` is covered, and whenever the result is not finite or Q_hc2 is negative, the estimate is `None`.
+- **Errors:** bad data never raises. Invalid constructor arguments raise `ValueError`.
+- **Accuracy:** the result is only as good as the circuit flow you configure.
 
 ### Read-only by default
 

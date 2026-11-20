@@ -24,6 +24,16 @@ A consumer that persisted :attr:`FlowEstimator.calibration` can pass it back as 
 ``calibration`` seed after a restart: the seeded estimator reports factor × pump speed right
 away, and its first calculated window blends into the seed like into a learned factor.
 
+:class:`HeatingCircuit2ReturnEstimator` derives the heating circuit 2 return temperature,
+which has no sensor, from a buffer energy balance over a window (requirement-45)::
+
+    Q_hc2 [kW] = Q_condenser − V_buffer · ρ · cp · d mean(T31, T33)/dt
+    T_return   = mean T32 − Q_hc2 / (flow_hc2 / 60 · ρ · cp)
+
+It holds only where all condenser heat goes into the buffer or to heating circuit 2 (no hot
+water, no other consumer), so the consumer constructs it only for such a plant and supplies
+the buffer volume and the circuit flow; neither is a register.
+
 The module performs no Modbus I/O: the consumer feeds it the dicts ``ThermiaGenesis``
 returns, with a monotonic timestamp, and owns the estimator's state. It never raises on data.
 """
@@ -37,6 +47,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 
 from .const import (
+    ATTR_COIL_ENABLE_PASSIVE_COOLING,
+    ATTR_DINPUT_COMPRESSOR_CONTROL_SIGNAL,
+    ATTR_DINPUT_INDICATION_WHEN_MIXING_VALVE_1_IS_PRODUCING_PASSIVE_COOLING,
+    ATTR_DINPUT_MIX_VALVE_1_CIRCULATION_PUMP_CONTROL_SIGNAL,
     ATTR_INPUT_BRINE_CIRCULATION_PUMP_SPEED,
     ATTR_INPUT_BRINE_IN_TEMPERATURE,
     ATTR_INPUT_BRINE_OUT_TEMPERATURE,
@@ -46,6 +60,9 @@ from .const import (
     ATTR_INPUT_CONDENSER_OUT_TEMPERATURE,
     ATTR_INPUT_CURRENT_CONSUMED_POWER,
     ATTR_INPUT_CURRENT_POWER_OUTPUT,
+    ATTR_INPUT_BUFFER_TANK_TEMPERATURE,
+    ATTR_INPUT_MIX_VALVE_1_SUPPLY_LINE_TEMPERATURE,
+    ATTR_INPUT_SYSTEM_SUPPLY_LINE_TEMPERATURE,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -345,3 +362,192 @@ class FlowEstimator:
         if flow is None:
             return FlowEstimate(None, UNKNOWN, self._calibration)
         return FlowEstimate(flow, PUMP_SPEED, self._calibration)
+
+
+# Heating circuit 2 return temperature (requirement-45).
+HC2_COMPRESSOR = ATTR_DINPUT_COMPRESSOR_CONTROL_SIGNAL  # discrete input 199
+HC2_PUMP = ATTR_DINPUT_MIX_VALVE_1_CIRCULATION_PUMP_CONTROL_SIGNAL  # discrete input 209, FR2
+HC2_PASSIVE_COOLING = (
+    ATTR_COIL_ENABLE_PASSIVE_COOLING,  # coil 33
+    ATTR_DINPUT_INDICATION_WHEN_MIXING_VALVE_1_IS_PRODUCING_PASSIVE_COOLING,  # discrete input 245
+)
+HC2_BUFFER = (ATTR_INPUT_BUFFER_TANK_TEMPERATURE, ATTR_INPUT_SYSTEM_SUPPLY_LINE_TEMPERATURE)  # T31, T33
+HC2_SUPPLY = ATTR_INPUT_MIX_VALVE_1_SUPPLY_LINE_TEMPERATURE  # T32
+
+
+@dataclass(frozen=True)
+class ReturnEstimate:
+    """Heating circuit 2 return temperature [°C] and the heat it carries [kW], both None when unknown."""
+
+    value: float | None
+    heat: float | None
+
+
+NO_RETURN = ReturnEstimate(None, None)
+
+
+@dataclass(frozen=True)
+class _CircuitSample:
+    timestamp: float
+    condenser_heat: float  # [kW]
+    buffer: float  # mean(T31, T33) [°C]
+    supply: float  # T32 [°C]
+
+
+def _flag(data: Mapping, key: str) -> bool | None:
+    value = data.get(key)
+    return value if isinstance(value, bool) else None
+
+
+def _gate(data: Mapping) -> str | None:
+    """Why ``data`` cannot enter the window because of a signal, or None."""
+    pump = _flag(data, HC2_PUMP)
+    if pump is not True:
+        return f"circuit 2 pump signal {'off' if pump is False else 'unknown'}"
+    for key in HC2_PASSIVE_COOLING:
+        flag = _flag(data, key)
+        if flag is not False:
+            return f"{key} {'on' if flag else 'unknown'}"
+    return None
+
+
+def _mean(values) -> float | None:
+    # Plain sum: it overflows to inf, which _finite rejects; math.fsum would raise.
+    return _finite(sum(values) / len(values))
+
+
+# DHF-REQ: genesis-wp/requirement-45
+class HeatingCircuit2ReturnEstimator:
+    """Windowed buffer energy-balance estimate of the heating circuit 2 return; feed it with :meth:`add`.
+
+    ``buffer_volume`` [L] and ``circuit_flow`` [L/min] are this plant's constants and have no
+    default. Every sample in the window must have the circuit 2 pump signal on, passive cooling
+    off and known, T31, T33 and T32, and while the compressor signal is on also T8, T9 and the
+    condenser flow; anything else, a gap above ``max_gap_s`` or a clock step back restarts it.
+    """
+
+    def __init__(self, buffer_volume: float, circuit_flow: float, *, fluid: Fluid | None = None,
+                 window_s: float = 1800.0, edge_s: float = 180.0, max_gap_s: float = 120.0) -> None:
+        if fluid is not None and not isinstance(fluid, Fluid):
+            raise ValueError(f"fluid must be a Fluid, got {fluid!r}")
+        values = (("buffer_volume", buffer_volume), ("circuit_flow", circuit_flow), ("window_s", window_s),
+                  ("edge_s", edge_s), ("max_gap_s", max_gap_s))
+        for name, value in values:
+            if _finite(value) is None or value <= 0:
+                raise ValueError(f"{name} must be a positive finite number, got {value!r}")
+        # The two buffer edge groups must not overlap, and a window must span more than one interval.
+        if 2 * edge_s >= window_s or max_gap_s >= window_s:
+            raise ValueError(f"need 2 × edge_s and max_gap_s below window_s, got edge_s={edge_s!r}, "
+                             f"max_gap_s={max_gap_s!r}, window_s={window_s!r}")
+        self.buffer_volume = float(buffer_volume)
+        self.circuit_flow = float(circuit_flow)
+        self.fluid = fluid or WATER
+        self.window_s = float(window_s)
+        self.edge_s = float(edge_s)
+        self.max_gap_s = float(max_gap_s)
+        self._window: deque[_CircuitSample] = deque()
+        self._last_timestamp: float | None = None
+        self._estimate = NO_RETURN
+
+    def add(self, timestamp_s: float, data: Mapping, condenser_flow: float | None) -> ReturnEstimate:
+        """Add one update dict taken at ``timestamp_s`` [s, monotonic] with the condenser flow [L/min]
+        at that time (for example :attr:`FlowEstimate.value`); returns the current estimate.
+
+        A sample whose timestamp is not finite or equals the previous one is dropped and the
+        previous estimate returned.
+        """
+        timestamp = _finite(timestamp_s)
+        if timestamp is None or timestamp == self._last_timestamp:
+            _LOGGER.debug("hc2 return: sample at %r dropped, timestamp not finite or repeated", timestamp_s)
+            return self._estimate
+        if self._last_timestamp is not None and timestamp < self._last_timestamp:
+            self._restart(f"clock stepped back from {self._last_timestamp} to {timestamp} s")
+        self._last_timestamp = timestamp
+        sample = self._sample(timestamp, data, condenser_flow)
+        if isinstance(sample, str):
+            self._restart(sample)
+        else:
+            self._append(sample)
+        self._estimate = self._calculated()
+        return self._estimate
+
+    def _restart(self, reason: str) -> None:
+        if self._window:
+            _LOGGER.debug("hc2 return: window restarted, %s", reason)
+        self._window.clear()
+
+    def _sample(self, timestamp: float, data, condenser_flow) -> _CircuitSample | str:
+        """The sample, or why it cannot enter the window."""
+        if not isinstance(data, Mapping):
+            return f"update is a {type(data).__name__}, not a mapping"
+        reason = _gate(data)
+        if reason is not None:
+            return reason
+        heat = self._condenser_heat(data, condenser_flow)
+        buffer = [_finite(data.get(key)) for key in HC2_BUFFER]
+        supply = _finite(data.get(HC2_SUPPLY))
+        if heat is None or None in buffer or supply is None:
+            return f"value missing (condenser heat {heat}, T31/T33 {buffer}, T32 {supply})"
+        mean = _mean(buffer)
+        if mean is None:
+            return f"buffer mean of {buffer} not finite"
+        return _CircuitSample(timestamp, heat, mean, supply)
+
+    def _condenser_heat(self, data: Mapping, condenser_flow) -> float | None:
+        """Condenser heat [kW]: 0 with the compressor signal off, None when it cannot be computed."""
+        running = _flag(data, HC2_COMPRESSOR)
+        if running is not True:
+            return None if running is None else 0.0
+        flow = _finite(condenser_flow)
+        delta_t = _difference(data, ATTR_INPUT_CONDENSER_OUT_TEMPERATURE, ATTR_INPUT_CONDENSER_IN_TEMPERATURE)
+        if flow is None or flow < 0 or delta_t is None:
+            return None
+        return _finite(flow / 60.0 * self.fluid.volumetric_heat_capacity * delta_t)
+
+    def _append(self, sample: _CircuitSample) -> None:
+        """Keep an uninterrupted run of valid samples that just covers ``window_s``."""
+        if self._window and sample.timestamp - self._window[-1].timestamp > self.max_gap_s:
+            self._restart(f"{sample.timestamp - self._window[-1].timestamp:.0f} s gap above {self.max_gap_s:.0f} s")
+        self._window.append(sample)
+        cutoff = sample.timestamp - self.window_s
+        while len(self._window) > 1 and self._window[1].timestamp <= cutoff:
+            self._window.popleft()
+
+    def _buffer_slope(self) -> float | None:
+        """d mean(T31, T33)/dt [K/s] between the means of the window's first and last ``edge_s``."""
+        window = self._window
+        first = [s for s in window if s.timestamp <= window[0].timestamp + self.edge_s]
+        last = [s for s in window if s.timestamp >= window[-1].timestamp - self.edge_s]
+        start, end = _mean([s.buffer for s in first]), _mean([s.buffer for s in last])
+        elapsed = _mean([s.timestamp for s in last]) - _mean([s.timestamp for s in first])
+        if start is None or end is None:
+            return None
+        return _finite((end - start) / elapsed)
+
+    def _calculated(self) -> ReturnEstimate:
+        window = self._window
+        if len(window) < 2 or window[-1].timestamp - window[0].timestamp < self.window_s:
+            return NO_RETURN
+        energy = supply_time = duration = 0.0
+        for previous, current in zip(window, list(window)[1:]):
+            dt = current.timestamp - previous.timestamp
+            energy += current.condenser_heat * dt
+            supply_time += current.supply * dt
+            duration += dt
+        slope = self._buffer_slope()
+        capacity = self.fluid.volumetric_heat_capacity
+        condenser = _finite(energy / duration)
+        if slope is None or condenser is None:
+            _LOGGER.debug("hc2 return: condenser heat %s kW or buffer slope %s K/s not finite", condenser, slope)
+            return NO_RETURN
+        heat = _finite(condenser - self.buffer_volume * capacity * slope)
+        supply = _finite(supply_time / duration)
+        value = None if heat is None or supply is None else _finite(
+            supply - heat / (self.circuit_flow / 60.0 * capacity))
+        if value is None or heat < 0:
+            _LOGGER.debug("hc2 return: no value (condenser %.3f kW, buffer slope %s K/s, circuit heat %s kW)",
+                          condenser, slope, heat)
+            return NO_RETURN
+        _LOGGER.debug("hc2 return: %.2f °C, circuit heat %.3f kW (condenser %.3f kW, buffer slope %.2e K/s)",
+                      value, heat, condenser, slope)
+        return ReturnEstimate(value, heat)
