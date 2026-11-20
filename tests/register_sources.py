@@ -190,6 +190,16 @@ WPE_I_071_LABELS = {
         "name_de": "Berechneter Sollwert Systemzulauftemperatur auf T33",
         "source": f"{STIEBEL} 2.2, 30019",
     },
+    ("input", 12): {
+        "name": "System supply temperature (T33)",
+        "name_de": "Systemzulauftemperatur T33",
+        "source": f"{STIEBEL} 2.2, 30013",
+    },
+    ("input", 41): {
+        "name": "Buffer tank temperature (T31)",
+        "name_de": "Pufferspeichertemperatur T31",
+        "source": f"{STIEBEL} 2.6, 30042",
+    },
     ("input", 40): {
         "name": "Heating circuit 2 supply temperature (T32)",
         "name_de": "Zulauftemperatur Heizkreis 2 T32",
@@ -234,4 +244,25 @@ WPE_I_071_LABELS = {
                    " Vorlaufsolltemperatur HK2 bei -25°C AT",
         "source": f"{STIEBEL} 2.3, 40116",
     },
+}
+
+
+# Sensor terminal tag and location per WPE-I register (requirement-44). Location is the role the model's
+# sources assign; where one plant placed the sensor is recorded in interface_spec-6, not here.
+INSTALLATION = "WPE-I installation manual, terminal table"
+WPE_I_071_SENSORS = {
+    ("input", 12): {"sensor": "T33", "location": "system_supply",
+                    "source": f"{STIEBEL} 2.2, 30013; {INSTALLATION} Y602 T33, section 7.13 (at the buffer outlet)"},
+    ("input", 13): {"sensor": "T35", "location": "outdoor",
+                    "source": f"{STIEBEL} 2.19, 30014 and 2.18, 40118; {INSTALLATION} Y604 T35"},
+    ("input", 15): {"sensor": "T36", "location": "hot_water_tank_top",
+                    "source": f"{STIEBEL} 2.11, 30016; {INSTALLATION} Y604 T36"},
+    ("input", 16): {"sensor": "T37", "location": "hot_water_tank_bottom",
+                    "source": f"{STIEBEL} 2.11, 30017; {INSTALLATION} Y604 T37"},
+    ("input", 40): {"sensor": "T32", "location": "heating_circuit_2_supply",
+                    "source": f"{STIEBEL} 2.3, 30041; {INSTALLATION} Y602 T32, section 7.13 (mixer circuit supply)"},
+    ("input", 41): {"sensor": "T31", "location": "buffer_tank",
+                    "source": f"{STIEBEL} 2.6, 30042; {INSTALLATION} Y602 T31"},
+    ("input", 121): {"sensor": "T34", "location": "room",
+                     "source": f"{STIEBEL} 2.10, 30122; {INSTALLATION} Y602 T34"},
 }
