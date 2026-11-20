@@ -270,8 +270,8 @@ def test_reported_wpe_i_registers_carry_the_labels_of_their_source_rows():
     from .register_sources import WPE_I_071_LABELS
 
     reported = (
-        [("input", a) for a in (18, 40, 43, 147)] + [("dinput", a) for a in (36, 60, 209)]
-        + [("holding", a) for a in range(109, 116)]
+        [("input", a) for a in (18, 40, 43, 147)] + [("dinput", a) for a in (36, 60, 209, 220)]
+        + [("holding", a) for a in (16, *range(109, 116))]
     )
     # Labels beyond the reported set (inputs 12 and 41, requirement-44 origin) are allowed; ac-128 covers them.
     assert set(reported) <= set(WPE_I_071_LABELS)
