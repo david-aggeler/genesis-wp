@@ -416,3 +416,32 @@ def test_implausible_calibration_warns_once_per_run(caplog, precalibrated):
     assert len(records) >= 3
     assert records[0].levelno == logging.WARNING
     assert all(r.levelno == logging.DEBUG for r in records[1:])
+
+
+# DHF-REQ: genesis-wp/requirement-31  DHF-TEST: genesis-wp/ac-171
+def test_a_seeded_estimator_reports_pump_speed_flow_before_its_first_calculated_window():
+    estimator = FlowEstimator(CONDENSER, calibration=0.22)
+    assert estimator.calibration == 0.22
+    resting = estimator.add(0, STOPPED)
+    assert resting.source == "pump_speed" and resting.calibration == 0.22
+    assert resting.value == pytest.approx(0.22 * 30, rel=1e-9)
+
+    calculated = feed(estimator, STEADY, start=30)
+    assert calculated.source == "calculated"
+    window_factor = CONDENSER_STEADY / 35
+    assert calculated.calibration == pytest.approx(0.22 + 0.1 * (window_factor - 0.22), rel=1e-6)
+    assert calculated.calibration != pytest.approx(window_factor, rel=1e-3)
+
+
+# DHF-REQ: genesis-wp/requirement-31  DHF-TEST: genesis-wp/ac-172
+@pytest.mark.parametrize("seed", [math.nan, math.inf, -math.inf, 0, 0.0, -0.1, True, "0.2", 0.61, 10**400])
+def test_constructor_rejects_a_calibration_seed_that_is_not_a_plausible_factor(seed):
+    with pytest.raises(ValueError, match="calibration"):
+        FlowEstimator(CONDENSER, max_flow=60.0, calibration=seed)
+
+
+def test_constructor_accepts_no_seed_and_a_seed_at_the_maximum():
+    assert FlowEstimator(CONDENSER).calibration is None
+    assert FlowEstimator(CONDENSER, calibration=None).calibration is None
+    assert FlowEstimator(CONDENSER, max_flow=60.0, calibration=0.6).calibration == 0.6
+    assert FlowEstimator(BRINE, calibration=1 / 4).calibration == 0.25  # an int-ratio seed is a float
