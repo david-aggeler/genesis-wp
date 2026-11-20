@@ -1,16 +1,25 @@
-"""The emulator reproduces the derived flows: estimators fed by library updates (requirement-31)."""
+"""The emulator reproduces the derived values: estimators fed by library updates (requirement-31, requirement-45)."""
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
 
 import pytest
 
-from genesis_wp.derived import BRINE, BRINE_MEG25, CONDENSER, WATER, FlowEstimator
+from genesis_wp.derived import (
+    BRINE,
+    BRINE_MEG25,
+    CONDENSER,
+    WATER,
+    FlowEstimator,
+    HeatingCircuit2ReturnEstimator,
+    ReturnEstimate,
+)
 from genesis_wp.emulator import heating
 from genesis_wp.emulator.climate import BUCKETS, LICENSE, SOURCE, ClimateProfile
 
-from ..harness import PROFILE_615, library_full_update
+from ..harness import PROFILE_615, emulator_client, library_full_update
 
 pytestmark = pytest.mark.dynamics
 
@@ -105,3 +114,35 @@ async def test_an_extreme_outlet_serves_a_clamped_inlet_not_a_wrapped_one(start_
     assert data["input_compressor_speed_rpm"] > 0 and data[HEAT] > 0
     # Clamped at the range ends; the top is 327.66 because the library reads raw 32767 as 0.
     assert data[inlet] == (-327.68 if low else 327.66)
+
+
+async def write_emulator(emu, **values):
+    """Write-enabled client against the emulator only (design_decision-5); the real plant is never written."""
+    writer = emulator_client(emu.host, port=emu.port, kind=emu.profile.model, delay=0, read_only=False)
+    try:
+        for name, value in values.items():
+            await writer.async_set(name, value)
+    finally:
+        await writer.close()
+
+
+# DHF-REQ: genesis-wp/requirement-45  DHF-TEST: genesis-wp/ac-180
+async def test_return_estimator_runs_on_emulator_updates_and_stops_in_passive_cooling(start_emulator):
+    emu = await start_emulator(PROFILE_615, dynamics=True, climate=flat_climate(), start_time=START)
+    emu.step(60)  # settle the lag models before the window
+    condenser = FlowEstimator(CONDENSER)
+    hc2 = HeatingCircuit2ReturnEstimator(300.0, 1100 / 60)
+    for _ in range(36):  # 35 simulated minutes: more than one 1800 s window
+        data = await library_full_update(emu)
+        timestamp = emu.simulated_time.timestamp()
+        flow = condenser.add(timestamp, data).value
+        estimate = hc2.add(timestamp, data, flow)
+        emu.advance(60)
+    assert estimate.value is not None and math.isfinite(estimate.value)
+    assert estimate.value <= data["input_mix_valve_1_supply_line_temperature"]
+    assert estimate.heat >= 0
+    await write_emulator(emu, coil_enable_passive_cooling=1)
+    data = await library_full_update(emu)
+    assert data["coil_enable_passive_cooling"] is True
+    timestamp = emu.simulated_time.timestamp()
+    assert hc2.add(timestamp, data, condenser.add(timestamp, data).value) == ReturnEstimate(None, None)
