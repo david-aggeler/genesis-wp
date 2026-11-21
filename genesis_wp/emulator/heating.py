@@ -15,9 +15,12 @@ Heat output (input 157) is linear in compressor speed; electric power (input 158
 output over a COP that falls with the lift, condenser out (input 9) minus brine out (input 11).
 Both are 0 while stopped. The coefficients are least-squares fits over the 20 h series.
 
-The mixing-valve register (input 43) is the valve's control signal, not a position, and is
-served as captured. Not modeled: the heating-season stop (holding 16), and when the
-compressor starts, stops or changes gear (issue-14).
+The mixing-valve register (input 43) is the controller's integrating output, not the actuator
+position (owner test 2026-11-19, issue-38): each simulated minute it moves by ``MIXER_GAIN``
+per kelvin of the HC2 set point (input 147) minus T32, clamped to 0-100 %, starting from the
+served value. It holds while HC2 passively cools (no plant evidence for that mode). Not
+modeled: the heating limit (holding 16), and when the compressor starts, stops or changes gear
+(issue-14).
 
 Room set points (requirement-23, formal_review-3): the plant keeps a reference set point per
 circuit, the one the stored curve belongs to. A change moves all seven curve points by the
@@ -91,9 +94,10 @@ HEAT_OUTPUT = 157  # kW at scale 100
 ELECTRIC_POWER = 158  # kW at scale 100
 CONDENSER_IN = 8
 BRINE_IN = 10
+VALVE = 43  # HC2 mixing valve control output, % at scale 100
 #: Inputs the model serves.
 INPUTS = (OUTDOOR, T33, SET_POINT_HC1, T32, T31, SET_POINT_HC2, DEMAND, HEAT_OUTPUT, ELECTRIC_POWER,
-          CONDENSER_IN, BRINE_IN)
+          CONDENSER_IN, BRINE_IN, VALVE)
 
 # Compressor inputs the model reads; the emulator's drift (or the profile) owns them.
 SPEED = 5  # rpm at scale 1
@@ -111,6 +115,11 @@ HEAT_OFFSET = 0.007  # [kW]
 COP_AT_REFERENCE = 5.44  # at the reference lift
 COP_PER_K = 0.160  # COP lost per K of lift
 REFERENCE_LIFT = 29.8  # [K]
+
+# Velocity-form fit over 69 h of recorder history (issue-38, requirement-20): the mixing valve
+# control output changes by this much per minute per kelvin of HC2 set point minus T32 (R² 0.93).
+MIXER_GAIN = 6.76  # [% per K per min]
+VALVE_MIN, VALVE_MAX = 0.0, 100.0  # [%]
 
 # Loop flow per pump speed, read-only read 2026-10-29 (requirement-31).
 CONDENSER_FLOW_PER_PERCENT = 0.22  # [L/min per %]
@@ -188,6 +197,8 @@ class HeatingModel:
     t33: float
     t32: float
     t31: float
+    #: HC2 mixing valve control output (input 43) [%].
+    valve: float = 0.0
     hold_outdoor: bool = False
     #: Random-walk the outdoor temperature each step; off while a climate profile sets it.
     walk_outdoor: bool = True
@@ -242,6 +253,7 @@ class HeatingModel:
             t33=value(input_raw, T33),
             t32=value(input_raw, T32),
             t31=value(input_raw, T31),
+            valve=value(input_raw, VALVE),
             hold_outdoor=outdoor is not None,
             not_fitted=frozenset(not_fitted),
             speed=_signed(input_raw(SPEED)),
@@ -362,6 +374,13 @@ class HeatingModel:
         if not self.running:
             # HC2 keeps drawing from the buffer, which cools toward T32.
             self.t31 += LAG_SUPPLY * (self.t32 - self.t31)
+        if not self.cooling:
+            self._integrate_valve(target_hc2)
+
+    def _integrate_valve(self, target_hc2: float) -> None:
+        """Advance the mixing valve control output by one minute of set point error (issue-38)."""
+        valve = self.valve + MIXER_GAIN * (target_hc2 - self.t32) * STEP_SECONDS / 60
+        self.valve = min(max(valve, VALVE_MIN), VALVE_MAX)
 
     def inputs(self) -> dict[int, int]:
         """Raw input register values (unsigned 16-bit) the model owns."""
@@ -376,6 +395,7 @@ class HeatingModel:
             ELECTRIC_POWER: self.electric_power,
             CONDENSER_IN: self.condenser_in,
             BRINE_IN: self.brine_in,
+            VALVE: self.valve,
         }
         raw = {a: _int16(a, round(v * SCALE)) & 0xFFFF for a, v in values.items() if a not in self.not_fitted}
         raw[DEMAND] = DEMAND_PASSIVE_COOLING if self.cooling else self.demand_raw
