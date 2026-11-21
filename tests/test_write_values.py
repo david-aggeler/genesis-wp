@@ -52,7 +52,6 @@ async def _assert_refused(unit, register, value):
         await _writer(unit).async_set(register, value)
     assert isinstance(info.value, ThermiaException)
     assert not isinstance(info.value, (KeyError, TypeError, ValueError))
-    assert not unit.connected
     assert unit.read_events == []
     assert writes == []
     return info.value
@@ -178,7 +177,6 @@ async def test_refused_write_logs_one_warning(mock_modbus_unit, caplog, read_onl
     assert records[0].levelno == logging.WARNING
     assert register in records[0].getMessage()
     assert records[0].getMessage() == str(info.value)
-    assert not mock_modbus_unit.connected
     assert mock_modbus_unit.read_events == []
     assert writes == []
 
@@ -240,7 +238,6 @@ async def test_valid_when_write_uses_last_read_selector(mock_modbus_unit, caplog
         with caplog.at_level(logging.WARNING, logger="genesis_wp"):
             with pytest.raises(GenesisInvalidWriteError) as error:
                 await client.async_set(sensor, 7.35)
-        assert not mock_modbus_unit.connected
         assert writes == []
         assert [r.getMessage() for r in caplog.records if r.name == "genesis_wp"][-1:] == [str(error.value)]
     assert mock_modbus_unit.read_events == reads
@@ -286,3 +283,41 @@ async def test_conditional_write_rechecks_after_suspension(mock_modbus_unit, mon
         with pytest.raises(GenesisInvalidWriteError):
             await write_task
         assert writes == []
+
+
+@pytest.fixture
+async def counting_listener():
+    """A loopback TCP listener that counts accepted connections and speaks no Modbus."""
+    accepted = []
+
+    async def handle(reader, writer):
+        accepted.append(writer.get_extra_info("peername"))
+        writer.close()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    try:
+        yield server.sockets[0].getsockname()[1], accepted
+    finally:
+        server.close()
+        await server.wait_closed()
+
+
+# DHF-TEST: genesis-wp/requirement-33  DHF-TEST: genesis-wp/ac-182
+async def test_refusals_open_no_connection_on_an_own_connection_client(counting_listener):
+    port, accepted = counting_listener
+    client = ThermiaGenesis("127.0.0.1", port=port, kind=WPE_I_KIND, delay=0, read_only=False)
+    cases = [
+        ("holding_not_a_register", 1),  # (a) unknown name
+        (COIL, 2),  # (b) coil value other than 0, 1, True, False
+        (INT_SCALE_100, 1.15 + 1e-5),  # (c) not exact at scale 100
+        ("holding_operational_mode", 0),  # (d) outside the enum table
+        ("holding_outdoor_temperature_sensor", 7.35),  # (e) selector never read
+    ]
+    try:
+        for register, value in cases:
+            with pytest.raises(ThermiaException):
+                await client.async_set(register, value)
+    finally:
+        await client.close()
+    await asyncio.sleep(0)  # let the listener run any pending accept callback
+    assert accepted == []
