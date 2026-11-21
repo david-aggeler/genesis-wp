@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+from genesis_wp.emulator import heating
 from genesis_wp.emulator.heating import interpolate
 
 from ..harness import PROFILE_615, emulator_client
@@ -137,14 +138,53 @@ async def readings(emu, names, steps, every=1):
         await client.close()
 
 
-# DHF-REQ: genesis-wp/requirement-20  DHF-TEST: genesis-wp/ac-66
-@pytest.mark.parametrize("served, expected", [(None, 100.0), (0, 0.0)])
-async def test_mixing_valve_signal_keeps_its_served_value(start_emulator, served, expected):
-    overrides = curves() if served is None else {**curves(), ("input_registers", 43): served}
-    emu = await dynamic(start_emulator, 8.75, overrides=overrides)
-    rows = await readings(emu, [T31, VALVE], 81)
-    assert rows[0][T31] < 28.5 < rows[-1][T31]  # the buffer crosses the HC2 set point
-    assert all(row[VALVE] == expected for row in rows)
+HC2_SET = "input_desired_temperature_distribution_circuit_mix_valve_1"
+
+
+def _assert_integrates(start, rows):
+    """Each step moves input 43 by MIXER_GAIN x (HC2 set - T32), clamped to 0-100 %.
+
+    Reads are rounded to 0.01, so the check allows the gain times that rounding.
+    """
+    previous = start
+    for row in rows:
+        expected = min(max(previous + heating.MIXER_GAIN * (row[HC2_SET] - row[T32]), 0.0), 100.0)
+        assert row[VALVE] == pytest.approx(expected, abs=0.05)
+        assert 0.0 <= row[VALVE] <= 100.0
+        previous = row[VALVE]
+
+
+# DHF-REQ: genesis-wp/requirement-20  DHF-TEST: genesis-wp/ac-181
+async def test_mixing_valve_output_rises_to_100_while_t32_stays_below_the_set_point(start_emulator):
+    # Stopped compressor: T33 holds at 25.0, so T32 (capped by T33) stays below the 28.5 set point.
+    cold = {**curves(), **STOPPED, ("input_registers", 12): 2500, ("input_registers", 40): 2500,
+            ("input_registers", 43): 0}
+    emu = await dynamic(start_emulator, 8.75, overrides=cold)
+    rows = await readings(emu, [VALVE, T32, HC2_SET], 10)
+    _assert_integrates(0.0, rows)
+    assert rows[0][VALVE] > 0.0
+    assert rows[-1][VALVE] == 100.0
+
+
+# DHF-REQ: genesis-wp/requirement-20  DHF-TEST: genesis-wp/ac-181
+async def test_mixing_valve_output_falls_to_0_while_t32_is_above_the_set_point(start_emulator):
+    # T32 settles toward the set point geometrically, so the summed error must exceed 100 % K/6.76.
+    warm = {**curves(), ("input_registers", 12): 3350, ("input_registers", 40): 3400,
+            ("input_registers", 43): 10000}
+    emu = await dynamic(start_emulator, 8.75, overrides=warm)
+    rows = await readings(emu, [VALVE, T32, HC2_SET], 30)
+    _assert_integrates(100.0, rows)
+    assert rows[0][VALVE] < 100.0
+    assert rows[-1][VALVE] == 0.0
+
+
+# DHF-REQ: genesis-wp/requirement-20  DHF-TEST: genesis-wp/ac-181
+async def test_mixing_valve_output_holds_in_passive_cooling(start_emulator):
+    cooling = {("coils", 33): 1, ("holding_registers", 298): 1, ("input_registers", 43): 4200}
+    emu = await dynamic(start_emulator, 8.75, overrides=cooling)
+    rows = await readings(emu, [VALVE, T32, HC2_SET], 10)
+    assert all(row[VALVE] == 42.0 for row in rows)
+    assert rows[0][T32] != rows[0][HC2_SET]  # a set point error exists, and the output still holds
 
 
 # DHF-REQ: genesis-wp/requirement-20  DHF-TEST: genesis-wp/ac-67
