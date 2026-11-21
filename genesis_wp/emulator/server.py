@@ -31,7 +31,7 @@ from pymodbus.server import ModbusTcpServer
 from pymodbus.simulator import DataType, SimData, SimDevice
 
 from ..const import KEY_ADDRESS, KEY_NOT_FITTED, KEY_REG_TYPE, REG_INPUT, REGISTERS
-from . import heating
+from . import compressor, heating
 from .capabilities import selection_overrides
 from .climate import ClimateProfile
 from .control_server import ControlServer
@@ -129,6 +129,8 @@ class Emulator:
     playback_speed: float = 1.0
     #: Control channel port (requirement-24); None = off, 0 = a free port, reported here after start().
     control_port: int | None = None
+    #: Start and stop the compressor on the heating demand integral (requirement-46); needs dynamics.
+    compressor_cycling: bool = False
 
     requests: list[Request] = field(default_factory=list, init=False)
     faults: list[Fault] = field(default_factory=list, init=False)
@@ -146,6 +148,7 @@ class Emulator:
             if not (d.block == INPUT_REGISTERS and d.address in not_fitted)
         ] if self.dynamics else []
         self._init_heating(not_fitted)
+        self._init_compressor()
         self._init_clock()
         self._paused = False
         self._server: ModbusTcpServer | None = None
@@ -184,6 +187,28 @@ class Emulator:
                 # A stopped compressor stays stopped; the drift would put its speed back in range.
                 owned.add((INPUT_REGISTERS, heating.SPEED))
             self._drift = [d for d in self._drift if (d.spec.block, d.spec.address) not in owned]
+
+    def _init_compressor(self) -> None:
+        # Opt-in compressor cycling (requirement-46): the model owns the compressor registers, so
+        # the drift no longer touches them.
+        self.compressor: compressor.CompressorModel | None = None
+        if not self.compressor_cycling:
+            return
+        if not self.dynamics or self.heating is None:
+            raise ValueError("compressor cycling needs dynamics and a profile with the heating registers")
+        missing = [
+            (block, a)
+            for block, addresses in ((INPUT_REGISTERS, compressor.INPUTS), (DISCRETE_INPUTS, compressor.DISCRETE_INPUTS))
+            for a in addresses if not self.profile.blocks[block].implemented(a)
+        ]
+        if missing:
+            raise ValueError(f"compressor cycling needs registers the profile lacks: {missing}")
+        self.compressor = compressor.CompressorModel.from_values(self.profile.blocks[INPUT_REGISTERS].value)
+        self._drift = [
+            d for d in self._drift if not (d.spec.block == INPUT_REGISTERS and d.spec.address in compressor.INPUTS)
+        ]
+        self.heating.demand_raw = self.compressor.demand
+        _LOGGER.info("compressor cycling on, %s", "running" if self.compressor.running else "stopped")
 
     def _init_clock(self) -> None:
         # Simulated clock (requirement-22): only with a climate profile, which needs the heating model.
@@ -329,11 +354,21 @@ class Emulator:
                     new = drift.value - delta  # reflect at the bound
                 drift.value = min(max(new, spec.min), spec.max)
             if self.dynamics and self.heating is not None:
-                self.heating.observe({
-                    d.spec.address: d.value for d in self._drift
-                    if d.spec.block == INPUT_REGISTERS and d.spec.address in heating.COMPRESSOR
-                })
-                self.heating.step(self._rng)
+                self._step_models()
+
+    def _step_models(self) -> None:
+        """One minute of the compressor (when cycling) and the heating model, which observes it."""
+        observed = {
+            d.spec.address: d.value for d in self._drift
+            if d.spec.block == INPUT_REGISTERS and d.spec.address in heating.COMPRESSOR
+        }
+        if self.compressor is not None:
+            self.compressor.step(cooling=self.heating.cooling)
+            self.heating.demand_raw = self.compressor.demand
+            observed[heating.SPEED] = self.compressor.rpm
+            observed[heating.CONDENSER_PUMP] = self.compressor.inputs()[compressor.CONDENSER_PUMP]
+        self.heating.observe(observed)
+        self.heating.step(self._rng)
 
     async def start(self) -> None:
         if self._server is not None:
@@ -400,6 +435,9 @@ class Emulator:
         if self.dynamics:
             for owned, raw in self.heating.inputs().items():
                 registers[owned - start_address] = raw
+            if self.compressor is not None:
+                for owned, raw in self.compressor.inputs().items():
+                    registers[owned - start_address] = raw
 
     def _heating_holding(self, start_address, address, registers, values) -> None:
         if values is not None and self.apply_writes:
@@ -417,7 +455,10 @@ class Emulator:
     def _heating_discrete_inputs(self, start_address, address, registers, values) -> None:
         if not self.dynamics:
             return
-        for bit_address, on in self.heating.discrete_inputs().items():
+        bits = self.heating.discrete_inputs()
+        if self.compressor is not None:
+            bits.update(self.compressor.discrete_inputs())
+        for bit_address, on in bits.items():
             word, bit = divmod(bit_address - start_address * 16, 16)
             if 0 <= word < len(registers):
                 registers[word] = registers[word] | (1 << bit) if on else registers[word] & ~(1 << bit)

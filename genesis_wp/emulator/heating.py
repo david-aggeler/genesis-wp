@@ -19,8 +19,9 @@ The mixing-valve register (input 43) is the controller's integrating output, not
 position (owner test 2026-11-19, issue-38): each simulated minute it moves by ``MIXER_GAIN``
 per kelvin of the HC2 set point (input 147) minus T32, clamped to 0-100 %, starting from the
 served value. It holds while HC2 passively cools (no plant evidence for that mode). Not
-modeled: the heating limit (holding 16), and when the compressor starts, stops or changes gear
-(issue-14).
+modeled: the heating limit (holding 16). When the compressor starts, stops or changes gear is
+the opt-in compressor model's job (``compressor.py``, requirement-46); without it the drift
+owns the compressor speed.
 
 Room set points (requirement-23, formal_review-3): the plant keeps a reference set point per
 circuit, the one the stored curve belongs to. A change moves all seven curve points by the
