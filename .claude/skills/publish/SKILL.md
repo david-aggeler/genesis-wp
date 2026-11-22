@@ -182,16 +182,19 @@ gh api --paginate repos/david-aggeler/genesis-wp/releases --jq '.[].tag_name'   
 gh release delete <tag> --yes --repo david-aggeler/genesis-wp                    # delete, keeps the tag; never --cleanup-tag
 ```
 
-Once change_request-72 has merged, use its tool, dry run first:
+requirement-50 carries openbrain requirement-1163's statement verbatim. `scripts/release_prune.py` (change_request-72) implements it. Run it dry first:
 
 ```zsh
-python scripts/release_prune.py --dry-run     # prints the keep and prune sets
-python scripts/release_prune.py               # deletes the prune set
+git ls-remote --tags origin > scratchpad/tags-before.txt
+.venv/bin/python scripts/release_prune.py --dry-run     # prints repo, keep and prune sets
+.venv/bin/python scripts/release_prune.py               # deletes the prune set's release entries
+git ls-remote --tags origin > scratchpad/tags-after.txt
+diff scratchpad/tags-before.txt scratchpad/tags-after.txt   # must print nothing (ac-199)
 ```
 
-The bounds default to maxMinorLines 5, maxDeepLines 2 and maxPatches 5. A policy with maxDeepLines above maxMinorLines is rejected (ac-201).
-
-Before that tool exists, show the keep and prune sets by hand first, then delete only the prune set. Either way, compare `git ls-remote --tags origin` before and after; the two lists must be identical.
+- **Bounds:** they default to maxMinorLines 5, maxDeepLines 2 and maxPatches 5. A policy with maxDeepLines above maxMinorLines is rejected before any GitHub call (ac-201). Change the bounds only on the owner's word.
+- **Boundary:** the tool's GitHub boundary can only list releases and delete a release entry; it never passes `--cleanup-tag`. genesis-wp publishes no other per-version artifact, so a tag without a release has nothing to prune.
+- **genesis-wp-ha:** wpe-ha-1 runs the same tool with `--repo david-aggeler/genesis-wp-ha`.
 
 ## Step 8: Notify
 
