@@ -146,3 +146,35 @@ async def test_return_estimator_runs_on_emulator_updates_and_stops_in_passive_co
     assert data["coil_enable_passive_cooling"] is True
     timestamp = emu.simulated_time.timestamp()
     assert hc2.add(timestamp, data, condenser.add(timestamp, data).value) == ReturnEstimate(None, None)
+
+
+# DHF-REQ: genesis-wp/requirement-51  DHF-TEST: genesis-wp/ac-205
+async def test_mixer_leg_flows_close_the_mass_balance_on_emulator_updates(start_emulator):
+    emu = await start_emulator(PROFILE_615, dynamics=True, climate=flat_climate(), start_time=START)
+    emu.step(60)
+    condenser = FlowEstimator(CONDENSER)
+    circuit_flow = 1100 / 60
+    default = HeatingCircuit2ReturnEstimator(300.0, circuit_flow)
+    # The emulator's lag model keeps T33 close to the estimated return, below the 2 K default floor.
+    # A low floor exercises the balance itself on the same emulator updates.
+    low = HeatingCircuit2ReturnEstimator(300.0, circuit_flow, min_mixer_delta_t=0.01)
+    for _ in range(36):
+        data = await library_full_update(emu)
+        timestamp = emu.simulated_time.timestamp()
+        flow = condenser.add(timestamp, data).value
+        guarded, estimate = default.add(timestamp, data, flow), low.add(timestamp, data, flow)
+        emu.advance(60)
+    assert estimate.value is not None and guarded.value == estimate.value
+    for name in ("hot_port_flow", "bypass_flow", "buffer_return_flow", "heat_pump_return_flow", "either_way_flow"):
+        for leg in (getattr(estimate, name), getattr(guarded, name)):
+            assert leg is None or math.isfinite(leg), name
+    # Default floor: the fail-closed branch (ac-205 allows it where the lag model gives a small gap).
+    assert guarded.hot_port_flow is None and guarded.bypass_flow is None and guarded.either_way_flow is None
+    assert guarded.heat_pump_return_flow == estimate.heat_pump_return_flow
+    assert estimate.hot_port_flow is not None
+    assert 0.0 <= estimate.hot_port_flow <= circuit_flow
+    assert estimate.hot_port_flow + estimate.bypass_flow == pytest.approx(circuit_flow, abs=1e-6)
+    assert estimate.hot_port_flow == estimate.buffer_return_flow
+    if estimate.either_way_flow is not None:
+        assert estimate.hot_port_flow + estimate.either_way_flow == pytest.approx(
+            estimate.heat_pump_return_flow, abs=1e-6)

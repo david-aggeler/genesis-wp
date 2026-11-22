@@ -34,6 +34,19 @@ It holds only where all condenser heat goes into the buffer or to heating circui
 water, no other consumer), so the consumer constructs it only for such a plant and supplies
 the buffer volume and the circuit flow; neither is a register.
 
+With each return estimate it also reports the flows of the mixer legs [L/min]
+(requirement-51). The mixing energy balance gives the hot-port share without the valve
+position, and mass balance gives the rest::
+
+    hot port (TR9 B -> TR12/13) = 60 · Q_hc2 / (ρ · cp · (mean T33 − T_return))
+    bypass                      = flow_hc2 − hot port
+    room return into the buffer = hot port
+    buffer bottom -> heat pump  = condenser flow
+    either-way stub             = condenser flow − hot port   (+ heat pump -> buffer, − buffer -> mixer)
+
+T33 stands for the temperature at the hot inlet (TR9 port B): it sits at the T-piece, so while
+the compressor runs it is the mixed value of condenser output and buffer top water.
+
 The module performs no Modbus I/O: the consumer feeds it the dicts ``ThermiaGenesis``
 returns, with a monotonic timestamp, and owns the estimator's state. It never raises on data.
 """
@@ -49,6 +62,7 @@ from dataclasses import dataclass
 from .const import (
     ATTR_COIL_ENABLE_PASSIVE_COOLING,
     ATTR_DINPUT_COMPRESSOR_CONTROL_SIGNAL,
+    ATTR_DINPUT_CONDENSER_PUMP_ON_OFF_CONTROL,
     ATTR_DINPUT_INDICATION_WHEN_MIXING_VALVE_1_IS_PRODUCING_PASSIVE_COOLING,
     ATTR_DINPUT_MIX_VALVE_1_CIRCULATION_PUMP_CONTROL_SIGNAL,
     ATTR_INPUT_BRINE_CIRCULATION_PUMP_SPEED,
@@ -373,14 +387,27 @@ HC2_PASSIVE_COOLING = (
 )
 HC2_BUFFER = (ATTR_INPUT_BUFFER_TANK_TEMPERATURE, ATTR_INPUT_SYSTEM_SUPPLY_LINE_TEMPERATURE)  # T31, T33
 HC2_SUPPLY = ATTR_INPUT_MIX_VALVE_1_SUPPLY_LINE_TEMPERATURE  # T32
+HC2_CONDENSER_PUMP = ATTR_DINPUT_CONDENSER_PUMP_ON_OFF_CONTROL  # discrete input 210
+#: Smallest T33 − T_return [K] for which the mixer leg flows are reported (requirement-51).
+MIN_MIXER_DELTA_T = 2.0
 
 
 @dataclass(frozen=True)
 class ReturnEstimate:
-    """Heating circuit 2 return temperature [°C] and the heat it carries [kW], both None when unknown."""
+    """Heating circuit 2 return temperature [°C] and the heat it carries [kW], both None when unknown.
+
+    The mixer leg flows [L/min] (requirement-51) are None per leg when unknown. ``either_way_flow``
+    is signed: positive from the heat pump into the buffer top, negative from the buffer top to
+    the mixer. T33 stands for the TR9 port B inlet temperature.
+    """
 
     value: float | None
     heat: float | None
+    hot_port_flow: float | None = None
+    bypass_flow: float | None = None
+    buffer_return_flow: float | None = None
+    heat_pump_return_flow: float | None = None
+    either_way_flow: float | None = None
 
 
 NO_RETURN = ReturnEstimate(None, None)
@@ -392,6 +419,8 @@ class _CircuitSample:
     condenser_heat: float  # [kW]
     buffer: float  # mean(T31, T33) [°C]
     supply: float  # T32 [°C]
+    hot_inlet: float  # T33 [°C], the TR9 port B inlet
+    condenser_flow: float | None  # [L/min] for the mixer legs; None when unknown
 
 
 def _flag(data: Mapping, key: str) -> bool | None:
@@ -427,9 +456,13 @@ class HeatingCircuit2ReturnEstimator:
     """
 
     def __init__(self, buffer_volume: float, circuit_flow: float, *, fluid: Fluid | None = None,
-                 window_s: float = 1800.0, edge_s: float = 180.0, max_gap_s: float = 120.0) -> None:
+                 window_s: float = 1800.0, edge_s: float = 180.0, max_gap_s: float = 120.0,
+                 min_mixer_delta_t: float = MIN_MIXER_DELTA_T) -> None:
         if fluid is not None and not isinstance(fluid, Fluid):
             raise ValueError(f"fluid must be a Fluid, got {fluid!r}")
+        if _finite(min_mixer_delta_t) is None or min_mixer_delta_t <= 0:
+            raise ValueError(f"min_mixer_delta_t must be a positive finite number, got {min_mixer_delta_t!r}")
+        self.min_mixer_delta_t = float(min_mixer_delta_t)
         values = (("buffer_volume", buffer_volume), ("circuit_flow", circuit_flow), ("window_s", window_s),
                   ("edge_s", edge_s), ("max_gap_s", max_gap_s))
         for name, value in values:
@@ -491,7 +524,7 @@ class HeatingCircuit2ReturnEstimator:
         mean = _mean(buffer)
         if mean is None:
             return f"buffer mean of {buffer} not finite"
-        return _CircuitSample(timestamp, heat, mean, supply)
+        return _CircuitSample(timestamp, heat, mean, supply, buffer[1], _leg_condenser_flow(data, condenser_flow))
 
     def _condenser_heat(self, data: Mapping, condenser_flow) -> float | None:
         """Condenser heat [kW]: 0 with the compressor signal off, None when it cannot be computed."""
@@ -528,12 +561,7 @@ class HeatingCircuit2ReturnEstimator:
         window = self._window
         if len(window) < 2 or window[-1].timestamp - window[0].timestamp < self.window_s:
             return NO_RETURN
-        energy = supply_time = duration = 0.0
-        for previous, current in zip(window, list(window)[1:]):
-            dt = current.timestamp - previous.timestamp
-            energy += current.condenser_heat * dt
-            supply_time += current.supply * dt
-            duration += dt
+        energy, supply_time, inlet_time, condenser_time, duration = _window_sums(window)
         slope = self._buffer_slope()
         capacity = self.fluid.volumetric_heat_capacity
         condenser = _finite(energy / duration)
@@ -550,4 +578,48 @@ class HeatingCircuit2ReturnEstimator:
             return NO_RETURN
         _LOGGER.debug("hc2 return: %.2f °C, circuit heat %.3f kW (condenser %.3f kW, buffer slope %.2e K/s)",
                       value, heat, condenser, slope)
-        return ReturnEstimate(value, heat)
+        condenser_flow = None if condenser_time is None else _finite(condenser_time / duration)
+        return ReturnEstimate(value, heat, **self._mixer_legs(heat, value, _finite(inlet_time / duration),
+                                                               condenser_flow))
+
+    def _mixer_legs(self, heat: float, t_return: float, hot_inlet: float | None,
+                    condenser_flow: float | None) -> dict:
+        """The mixer leg flows [L/min] (requirement-51); a leg is None when it cannot be stated."""
+        legs = {"heat_pump_return_flow": condenser_flow}
+        delta_t = None if hot_inlet is None else _finite(hot_inlet - t_return)
+        if delta_t is None or delta_t < self.min_mixer_delta_t:
+            _LOGGER.debug("hc2 mixer legs: T33 − T_return %s K below the %.2f K floor", delta_t,
+                          self.min_mixer_delta_t)
+            return legs
+        hot = _finite(60.0 * heat / (self.fluid.volumetric_heat_capacity * delta_t))
+        if hot is None or not 0.0 <= hot <= self.circuit_flow:
+            _LOGGER.debug("hc2 mixer legs: hot-port flow %s L/min outside 0 … %.2f L/min", hot, self.circuit_flow)
+            return legs
+        either = None if condenser_flow is None else _finite(condenser_flow - hot)
+        _LOGGER.debug("hc2 mixer legs: hot port %.2f, bypass %.2f, either-way %s L/min", hot,
+                      self.circuit_flow - hot, either)
+        return {**legs, "hot_port_flow": hot, "bypass_flow": self.circuit_flow - hot, "buffer_return_flow": hot,
+                "either_way_flow": either}
+
+
+def _leg_condenser_flow(data: Mapping, condenser_flow) -> float | None:
+    """Condenser flow [L/min] for the mixer legs: the estimate when known, 0 only with the pump signal off."""
+    flow = _finite(condenser_flow)
+    if flow is not None and flow >= 0:
+        return flow
+    return 0.0 if _flag(data, HC2_CONDENSER_PUMP) is False else None
+
+
+def _window_sums(window) -> tuple[float, float, float, float | None, float]:
+    """Time integrals over the window's intervals; each interval carries its closing sample."""
+    energy = supply_time = inlet_time = duration = 0.0
+    condenser_time: float | None = 0.0
+    for previous, current in zip(window, list(window)[1:]):
+        dt = current.timestamp - previous.timestamp
+        energy += current.condenser_heat * dt
+        supply_time += current.supply * dt
+        inlet_time += current.hot_inlet * dt
+        duration += dt
+        if condenser_time is not None:
+            condenser_time = None if current.condenser_flow is None else condenser_time + current.condenser_flow * dt
+    return energy, supply_time, inlet_time, condenser_time, duration

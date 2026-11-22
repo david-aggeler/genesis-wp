@@ -89,6 +89,26 @@ estimate.value, estimate.heat  # °C and kW, or None and None
 - **Errors:** bad data never raises. Invalid constructor arguments raise `ValueError`.
 - **Accuracy:** the result is only as good as the circuit flow you configure.
 
+#### Mixer leg flows
+
+No register reports the mixing valve's position (input 43 is a control output, not the position). The mixing energy balance gives the hot share anyway, so each estimate also carries the flows of the mixer legs in L/min:
+
+| Field | Leg | Formula |
+|---|---|---|
+| `hot_port_flow` | T-piece → TR9 port B → mixing valve | 60 · Q_hc2 / (ρ · cp · (mean T33 − T_return)) |
+| `bypass_flow` | circuit return → mixing valve | circuit flow − hot port |
+| `buffer_return_flow` | circuit return → buffer | hot port |
+| `heat_pump_return_flow` | buffer bottom → heat pump | condenser flow |
+| `either_way_flow` | T-piece ↔ buffer top | condenser flow − hot port; positive into the buffer, negative out of it |
+
+- **T33:** it stands for the hot inlet temperature. It sits at the T-piece, so while the compressor runs it is the mixed value of condenser output and buffer top water.
+- **Condenser flow:** the value passed to `add`. With the compressor off it is still used when known (buffer circulation). It counts as 0 only while discrete input 210 (condenser pump) is off.
+- **Fail closed per leg:** the hot port, bypass, buffer return and either-way flows are `None` in three cases, and a DEBUG line names the reason:
+  - the return estimate is `None`;
+  - mean T33 − T_return is below `min_mixer_delta_t` (default 2 K);
+  - the hot-port flow falls outside 0 … circuit flow.
+- **Accuracy:** the legs inherit every uncertainty of the return estimate and scale with the configured circuit flow.
+
 ### Read-only by default
 
 A client refuses every write (`async_set`) with `GenesisReadOnlyError` before anything is sent to the heat pump. To write, construct it with `read_only=False`; the setting cannot be changed afterwards.
