@@ -9,10 +9,14 @@ import random
 from pathlib import Path
 from statistics import mean
 
+import pytest
+
 from genesis_wp.emulator import get_profile
 from genesis_wp.emulator.heating import HeatingModel
 
 from ..harness import PROFILE_615
+
+pytestmark = pytest.mark.dynamics
 
 
 def heating_model(outdoor: float, room_set_point: float | None = None) -> HeatingModel:
