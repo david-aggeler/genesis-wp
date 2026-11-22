@@ -17,6 +17,8 @@ The input 30 law is a placeholder, not physics: as an integral of any set point 
 series fits with R² <= 0.11. The phase law below reproduces the median run (189 min) and stop
 (127 min) at the series' 10-12 °C outdoor temperature. The plant modulates without stopping below
 about 9.7 °C, and this law always cycles. Hence opt-in (``Emulator(compressor_cycling=True)``).
+Cycling also enables the heating model's buffer heat balance and supply temperature response
+to compressor output and stops (requirement-20).
 """
 
 from __future__ import annotations

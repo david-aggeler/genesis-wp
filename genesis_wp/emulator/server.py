@@ -204,6 +204,7 @@ class Emulator:
         if missing:
             raise ValueError(f"compressor cycling needs registers the profile lacks: {missing}")
         self.compressor = compressor.CompressorModel.from_values(self.profile.blocks[INPUT_REGISTERS].value)
+        self.heating.heat_balance = True
         self._drift = [
             d for d in self._drift if not (d.spec.block == INPUT_REGISTERS and d.spec.address in compressor.INPUTS)
         ]

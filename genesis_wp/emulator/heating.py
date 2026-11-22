@@ -15,6 +15,10 @@ Heat output (input 157) is linear in compressor speed; electric power (input 158
 output over a COP that falls with the lift, condenser out (input 9) minus brine out (input 11).
 Both are 0 while stopped. The coefficients are least-squares fits over the 20 h series.
 
+With compressor cycling enabled, T31 integrates heat output minus the building load
+each minute (requirement-20). T33 approaches T31 plus a heat-dependent margin while
+running. After a stop, T33 holds for 30 simulated minutes, then approaches T31.
+
 The mixing-valve register (input 43) is the controller's integrating output, not the actuator
 position (owner test 2026-11-19, issue-38): each simulated minute it moves by ``MIXER_GAIN``
 per kelvin of the HC2 set point (input 147) minus T32, clamped to 0-100 %, starting from the
@@ -137,6 +141,13 @@ INT16_MIN, INT16_MAX = -0x8000, 0x7FFE
 STEP_SECONDS = 60
 LAG_SUPPLY = 0.2  # fraction of the gap a supply temperature closes per step
 LAG_BUFFER = 0.05
+# Fits to the HC1 set point step and the week's recorder history (issue-39, requirement-20).
+BUFFER_HEAT_CAPACITY = 2000.0  # [kJ/K], from the initial rise at 4800 rpm
+OUTDOOR_BALANCE_POINT = 16.0  # [°C], fitted to duty versus outdoor temperature
+OUTDOOR_LOAD_GAIN = 0.36  # [kW/K], fitted to duty versus outdoor temperature
+BUFFER_LOAD_GAIN = 0.3  # [kW/K], from the settled temperature at 4800 rpm
+SUPPLY_MARGIN_GAIN = 0.35  # [K/kW], from the running T33 − T31 difference
+SUPPLY_HOLD_MINUTES = 30  # [min], from the observed holds after seven stops
 OUTDOOR_STEP = 0.02  # [K] per step, random walk
 OUTDOOR_SPAN = 3.0  # [K] the walk stays within around its start
 
@@ -223,6 +234,8 @@ class HeatingModel:
     brine_fluid: Fluid = BRINE_MEG25
     #: Room set points by circuit, for the circuits the profile has rules for.
     room_set_points: dict[str, RoomSetPoint] = field(default_factory=dict)
+    heat_balance: bool = False
+    _stopped_minutes: int = field(init=False, default=0)
     _start_outdoor: float = field(init=False)
 
     def __post_init__(self) -> None:
@@ -361,22 +374,41 @@ class HeatingModel:
             if abs(walk - self._start_outdoor) > OUTDOOR_SPAN:
                 walk = self.outdoor - (walk - self.outdoor)  # reflect at the bound
             self.outdoor = walk
-        if self.running:
+        target_hc2 = self.set_point_hc2
+        if self.heat_balance:
+            self._step_heat_balance(target_hc2)
+        elif self.running:
             self.t33 += LAG_SUPPLY * (self.set_point_hc1 - self.t33)
             self.t31 += LAG_BUFFER * (self.t33 - self.t31)
         # else: no flow past T33, so it holds (formal_review-2 finding 3).
-        target_hc2 = self.set_point_hc2
         if self.cooling:
             # Cold from the brine heat exchanger, not from the buffer.
             self.t32 += LAG_SUPPLY * (target_hc2 - self.t32)
         else:
             # The mixer draws from the supply line: T32 never above T33 (formal_review-2 finding 2).
             self.t32 += LAG_SUPPLY * (min(target_hc2, self.t33) - self.t32)
-        if not self.running:
+        if not self.heat_balance and not self.running:
             # HC2 keeps drawing from the buffer, which cools toward T32.
             self.t31 += LAG_SUPPLY * (self.t32 - self.t31)
         if not self.cooling:
             self._integrate_valve(target_hc2)
+
+    # DHF-REQ: genesis-wp/requirement-20
+    def _step_heat_balance(self, target_hc2: float) -> None:
+        """Integrate buffer energy and advance the supply sensor one simulated minute."""
+        heat = self.heat_output
+        outdoor_load = OUTDOOR_LOAD_GAIN * max(OUTDOOR_BALANCE_POINT - self.outdoor, 0.0)
+        buffer_load = BUFFER_LOAD_GAIN * (self.t31 - target_hc2)
+        self.t31 += (heat - outdoor_load - buffer_load) * STEP_SECONDS / BUFFER_HEAT_CAPACITY
+        if self.running:
+            self._stopped_minutes = 0
+            target = self.t31 + SUPPLY_MARGIN_GAIN * heat
+        else:
+            self._stopped_minutes += 1
+            if self._stopped_minutes <= SUPPLY_HOLD_MINUTES:
+                return
+            target = self.t31
+        self.t33 += LAG_SUPPLY * (target - self.t33)
 
     def _integrate_valve(self, target_hc2: float) -> None:
         """Advance the mixing valve control output by one minute of set point error (issue-38)."""
