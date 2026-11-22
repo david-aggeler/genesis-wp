@@ -60,14 +60,22 @@ def test_heat_balance_replays_recorded_supply_temperature():
     assert mean(error ** 2 for error in errors) ** 0.5 <= 1.0
 
 
+@pytest.mark.parametrize(("initial_supply", "initial_buffer"), [(31.0, 28.0), (23.0, 19.0)])
 # DHF-TEST: genesis-wp/requirement-20  DHF-TEST: genesis-wp/ac-207
-def test_heat_balance_holds_supply_after_stop_then_follows_buffer():
+def test_heat_balance_holds_supply_after_stop_then_follows_buffer(initial_supply, initial_buffer):
     model = heating_model(10.0)
-    # Seed the running state at the criterion's pre-stop temperature difference.
-    model.observe({5: 1400, 39: 3500})
-    model.t33 = model.t31 + 2.0
+    # Start with residual heat in the supply line. At 1400 rpm the steady-state
+    # supply margin is smaller than the gap required for this stop scenario.
+    model.t33, model.t31 = initial_supply, initial_buffer
     rng = random.Random(0)
-    at_stop = model.inputs()
+    model.observe({5: 1400, 39: 3500})
+    for _ in range(5):
+        model.step(rng)
+        at_stop = model.inputs()
+        if at_stop[12] - at_stop[41] >= 200:
+            break
+    else:
+        pytest.fail("1400 rpm run did not reach the required 2 K pre-stop gap")
     model.observe({5: 0, 39: 0})
     previous_buffer = at_stop[41]
     for minute in range(1, 121):
@@ -79,3 +87,27 @@ def test_heat_balance_holds_supply_after_stop_then_follows_buffer():
         if minute >= 60:
             assert abs(values[12] - values[41]) <= 50, minute
         previous_buffer = values[41]
+
+
+def test_running_again_restarts_the_supply_hold():
+    model = heating_model(10.0)
+    rng = random.Random(0)
+    model.observe({5: 1400, 39: 3500})
+    model.step(rng)
+
+    model.observe({5: 0, 39: 0})
+    for _ in range(120):
+        model.step(rng)
+
+    model.observe({5: 1400, 39: 3500})
+    for _ in range(10):
+        model.step(rng)
+    at_stop = model.inputs()[12]
+
+    model.observe({5: 0, 39: 0})
+    for _ in range(30):
+        model.step(rng)
+        assert model.inputs()[12] == at_stop
+
+    model.step(rng)
+    assert model.inputs()[12] < at_stop

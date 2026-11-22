@@ -387,6 +387,8 @@ class HeatingModel:
         else:
             # The mixer draws from the supply line: T32 never above T33 (formal_review-2 finding 2).
             self.t32 += LAG_SUPPLY * (min(target_hc2, self.t33) - self.t32)
+            if self.heat_balance:
+                self.t32 = min(self.t32, self.t33)
         if not self.heat_balance and not self.running:
             # HC2 keeps drawing from the buffer, which cools toward T32.
             self.t31 += LAG_SUPPLY * (self.t32 - self.t31)
@@ -399,8 +401,13 @@ class HeatingModel:
         heat = self.heat_output
         outdoor_load = OUTDOOR_LOAD_GAIN * max(OUTDOOR_BALANCE_POINT - self.outdoor, 0.0)
         buffer_load = BUFFER_LOAD_GAIN * (self.t31 - target_hc2)
-        self.t31 += (heat - outdoor_load - buffer_load) * STEP_SECONDS / BUFFER_HEAT_CAPACITY
-        if self.running:
+        running = self.running
+        net_heat = heat - outdoor_load - buffer_load
+        if not running:
+            # With the compressor stopped, a cold buffer has no modeled heat source.
+            net_heat = min(net_heat, 0.0)
+        self.t31 += net_heat * STEP_SECONDS / BUFFER_HEAT_CAPACITY
+        if running:
             self._stopped_minutes = 0
             target = self.t31 + SUPPLY_MARGIN_GAIN * heat
         else:
