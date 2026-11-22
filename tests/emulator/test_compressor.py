@@ -176,3 +176,16 @@ async def test_compressor_stays_stopped_in_passive_cooling(start_emulator):
     emu = await cycling(start_emulator, overrides={("coils", 33): 1, ("holding_registers", 298): 1})
     rows = await readings(emu, 300, names=[RPM, SIGNAL])
     assert all(not row[SIGNAL] and row[RPM] == 0 for row in rows)
+
+
+async def test_hc2_supply_stays_below_system_supply_as_it_cools(start_emulator):
+    emu = await start_emulator(
+        PROFILE_615, dynamics=True, outdoor_temperature=10.0, compressor_cycling=True
+    )
+    supply = "input_system_supply_line_temperature"
+    hc2 = "input_mix_valve_1_supply_line_temperature"
+    rows = await readings(emu, 160, names=[SIGNAL, supply, hc2])
+    stop = next(i for i, kind in transitions(rows) if kind == "stop")
+    assert rows[stop + 30][supply] < rows[stop][supply]
+    for minute, row in enumerate(rows[stop:], start=1):
+        assert row[hc2] <= row[supply], minute
