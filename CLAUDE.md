@@ -206,7 +206,7 @@ Cumulative by rung — each rung runs everything below it.
 | `integration` | `python -m pytest`, including the tests that start emulator instances and run full updates against every firmware profile | as `static`, plus the coverage check: `genesis_wp` line+branch ≥ 90 % |
 | `system` | as `integration`, plus an owner-approved, read-only (FC1–4) probe of the real heat pump compared with the current profile — never automated, never a write | as `integration` |
 
-- **Hosted CI is not a gate.** `.github/workflows/python-publish.yml` (inherited from upstream) builds and uploads to PyPI whenever a GitHub release is created. It runs no tests and contradicts the no-PyPI rule, so it is to be removed by a change_request; never create a GitHub release while it is still in the tree. Creating a release is outward-facing: owner's OK only. Every gate runs locally on the DEV VM.
+- **No hosted CI.** The repo has no GitHub workflow. change_request-70 removed the inherited PyPI upload workflow, and `tests/test_distribution.py` fails if a package-index upload path comes back (requirement-47). Creating a release is outward-facing: owner's OK only. Every gate runs locally on the DEV VM.
 - **The rungs are not substitutes for one another.** Never satisfy a rung with a lower rung's evidence.
 
 ### Reading a gate's result
@@ -255,4 +255,4 @@ This file names commands only by intent. Arguments, flags and exit codes come fr
 - `genesis_wp/__init__.py`, `genesis_wp/const.py` — the library (inherited from pythermiagenesis17; `const.py` keeps upstream's layout and register names so fixes stay portable).
 - `genesis_wp/emulator/` — Modbus TCP emulator and firmware profiles; `scripts/probe_to_profile.py` converts read-only probe captures into profiles.
 - `setup.py`, `requirements.txt` — packaging; runtime dependency is `modbus-connection[pymodbus]` only, the emulator's pymodbus sits in the `emulator` extra.
-- `.github/workflows/python-publish.yml` — PyPI upload on GitHub release; see *The gate*.
+- `.claude/skills/publish/SKILL.md` — the release procedure (GitHub tag and release only; see requirement-47 to requirement-50).
