@@ -155,7 +155,7 @@ git show vX.Y.Z:VERSION                      # X.Y.Z
 Do these in order, and report anything partial.
 
 1. Set the release_notes record to `status: released`.
-2. Call `create_baseline` named `genesis-wp vX.Y.Z` and capture its ref. The product prefix keeps baseline names unique next to genesis-wp-ha's.
+2. Call `create_baseline` named `genesis-wp-vX.Y.Z` and capture its ref. The product prefix keeps baseline names unique next to genesis-wp-ha's. The name is a git tag, so no spaces: `genesis-wp vX.Y.Z` is rejected as an invalid reference name. If the call times out, check `list_baselines` before retrying; the baseline may already exist.
 3. `admin_get_product_version` genesis-wp X.Y.Z. If the row exists, `admin_update_product_version`:
    - keep its body and append `Git tag: vX.Y.Z (<SHA>)`, `Build: X.Y.Z.<BUILD>` and `SoR baseline: <ref>`;
    - set `release_notes` to the release_notes record link.
