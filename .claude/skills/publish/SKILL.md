@@ -5,7 +5,7 @@ description: >
   gate on a clean main, annotated vX.Y.Z tag and GitHub release on origin, gold product_version
   released and the next one opened, old GitHub releases pruned, genesis-wp-ha told the tag and
   SHA. No PyPI or other package index unless the owner decides otherwise. Use when the user says "/publish", "publish a version", "publish vX.Y.Z",
-  "cut a release", "release the library", "tag a release".
+  "publish ... as X.Y.Z", "cut a release", "release the library", "tag a release".
 allowed-tools: mcp__gold__search_release_notes, mcp__gold__list_release_notes, mcp__gold__get_release_notes, mcp__gold__create_release_notes, mcp__gold__update_release_notes, mcp__gold__get_template_for, mcp__gold__admin_list_product_versions, mcp__gold__admin_get_product_version, mcp__gold__admin_update_product_version, mcp__gold__admin_advance_product_version_status, mcp__gold__admin_create_product_version, mcp__gold__create_baseline, mcp__gold__list_change_request, mcp__gold__get_change_request, mcp__gold__list_issue
 disable-model-invocation: true
 ---
@@ -75,18 +75,19 @@ A hit means a GitHub release could upload to a package index, so stop. change_re
    git log --format='%h %s' <prev-tag>..HEAD | rg -o 'change_request-\d+|CR-\d+' | sort -u
    ```
 
-4. Suggest the version:
-   - any kind: feature change_request: a minor bump;
-   - otherwise: a patch bump;
-   - the owner may name any version above the latest tag, including upstream's v0.3.0.
+4. **The version is a decision made at publish time** (owner, 2026-11-22). The owner names it in the publish request, for example "publish next verification round as 0.4.2". It must be above every existing tag, upstream's v0.3.0 included. Only when the request names none, suggest one and ask:
+   - a minor bump if any merged change_request is kind: feature;
+   - otherwise a patch bump.
 
-   Ask: "Next version would be vX.Y.Z (N change_requests since <prev>). Use that?"
-5. If `VERSION` differs from the chosen `X.Y.Z`, bump it in a single commit on main, push main (`git push origin main:master`), and restart at Step 0. The file only ever moves to the release core, so this is release bookkeeping, not a feature change.
-6. Check the stamp (ac-191). It must print `X.Y.Z.<git rev-list --count HEAD>`:
+   > Next version would be vX.Y.Z (N change_requests since <prev>). Use that?
+5. If `VERSION` differs from `X.Y.Z`, commit the one-line bump on main and push it (`git push origin main:master`). This is the publish skill's own bookkeeping commit, with no change_request (CLAUDE.md, *Change control*). Then restart at Step 0. VERSION is never bumped ahead of a publish: between releases it keeps the last released core.
+6. Check the stamp (ac-191). After a fresh editable install it must print `X.Y.Z.<git rev-list --count HEAD>` twice:
 
    ```zsh
-   .venv/bin/pip install -q -e . && .venv/bin/python -c 'import importlib.metadata as m; print(m.version("genesis-wp"))'
+   .venv/bin/pip install -q --no-deps --no-build-isolation -e . && .venv/bin/python -c 'import importlib.metadata as m, genesis_wp; print(m.version("genesis-wp"), genesis_wp.__version__)'
    ```
+
+   A stale `genesis_wp.egg-info` in the checkout (untracked, from an old sdist build) shadows the metadata when Python starts in the repo directory; delete it if the two values differ.
 
 ## Step 2: Write the release notes in gold
 
