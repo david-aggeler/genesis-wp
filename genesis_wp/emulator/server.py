@@ -364,7 +364,9 @@ class Emulator:
             if d.spec.block == INPUT_REGISTERS and d.spec.address in heating.COMPRESSOR
         }
         if self.compressor is not None:
-            self.compressor.step(cooling=self.heating.cooling)
+            # T33 error against input 18 as the last read showed it (requirement-46).
+            error = self.heating.t33 - self.heating.set_point_hc1
+            self.compressor.step(error, cooling=self.heating.cooling)
             self.heating.demand_raw = self.compressor.demand
             observed[heating.SPEED] = self.compressor.rpm
             observed[heating.CONDENSER_PUMP] = self.compressor.inputs()[compressor.CONDENSER_PUMP]
