@@ -4,7 +4,7 @@ description: >
   Publish a genesis-wp library release: version stamp check, gold release notes, integration
   gate on a clean main, annotated vX.Y.Z tag and GitHub release on origin, gold product_version
   released and the next one opened, old GitHub releases pruned, genesis-wp-ha told the tag and
-  SHA. Never PyPI. Use when the user says "/publish", "publish a version", "publish vX.Y.Z",
+  SHA. No PyPI or other package index unless the owner decides otherwise. Use when the user says "/publish", "publish a version", "publish vX.Y.Z",
   "cut a release", "release the library", "tag a release".
 allowed-tools: mcp__gold__search_release_notes, mcp__gold__list_release_notes, mcp__gold__get_release_notes, mcp__gold__create_release_notes, mcp__gold__update_release_notes, mcp__gold__get_template_for, mcp__gold__admin_list_product_versions, mcp__gold__admin_get_product_version, mcp__gold__admin_update_product_version, mcp__gold__admin_advance_product_version_status, mcp__gold__admin_create_product_version, mcp__gold__create_baseline, mcp__gold__list_change_request, mcp__gold__get_change_request, mcp__gold__list_issue
 disable-model-invocation: true
@@ -25,7 +25,7 @@ The procedure carries user_need-6 and its requirements:
 
 | Requirement | Rule |
 |---|---|
-| requirement-47 | never PyPI |
+| requirement-47 | no package index unless the owner decides otherwise |
 | requirement-48 | version MAJOR.MINOR.PATCH.BUILD |
 | requirement-49 | what a release consists of |
 | requirement-50 | release retention |
@@ -222,7 +222,7 @@ For a failure, name the step that failed and what is already live.
 
 ## What this skill never does
 
-- Upload to PyPI or any package index, or create a release while a PyPI upload path exists.
+- Upload to PyPI or any package index, or create a release while an upload path exists. Only the owner can change that rule (requirement-47).
 - Release without the owner's explicit yes in this chat.
 - Skip or pipe the gate, or release from a dirty tree, a branch, a worktree or a shallow clone.
 - Force-push, move or delete a tag, upstream tags included.
