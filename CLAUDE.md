@@ -55,7 +55,7 @@ Use these only as chat shorthand. **Records always carry the full name.**
 - An async Python library (module `genesis_wp`, distribution `genesis-wp`) for heat pumps on the Thermia Genesis controller platform, over Modbus TCP. The first target is the Stiebel Eltron WPE-I 07.1 Plus.
 - A Modbus TCP emulator (`genesis_wp.emulator`, CLI `genesis-wp-emulator`) serving captured firmware-profile snapshots, so nothing has to be tested against the live plant.
 - A fork of [ulrichwi/pythermiagenesis17](https://github.com/ulrichwi/pythermiagenesis17), itself a fork of [CJNE/pythermiagenesis](https://github.com/CJNE/pythermiagenesis). Remotes: `origin` (ours), `upstream` (ulrichwi), `cjne`.
-- **Not** a Home Assistant integration. That is the separate product genesis-wp-ha (repo david-aggeler/genesis-wp-ha, HA domain `genesis_wp`). It consumes this library by pinning a git commit, and there is no PyPI release until it works. Don't build it here. Cross-product record links are rejected, so cite genesis-wp-ha records in text. When a fix it needs lands on master, send it the full commit SHA.
+- **Not** a Home Assistant integration. That is the separate product genesis-wp-ha (repo david-aggeler/genesis-wp-ha, HA domain `genesis_wp`). It consumes this library by pinning a git commit or release tag. **Nothing is ever published to PyPI** (owner decision 2026-11-22); releases are GitHub tags and releases on origin only. Don't build it here. Cross-product record links are rejected, so cite genesis-wp-ha records in text. When a fix it needs lands on master, send it the full commit SHA.
 - **Not** in charge of rollout. The homelab product owns deployment to its VMs and its exploration-8. When a stage lands, tell homelab.
 
 Direction and principles live in gold, in genesis-wp vision-1.
@@ -74,7 +74,7 @@ Direction and principles live in gold, in genesis-wp vision-1.
 - Batch related git operations with `&&` so they land atomically.
 - Prefer a reversible move (new commit, branch, stash) over a destructive in-place edit.
 - **Push main to origin after every commit.** When a commit or merge lands on local `main`, push it right away with `git push origin main:master` (the remote's default branch is `master`). Pre-approved; no per-push OK. Fast-forward only: if the push is rejected, report it and stop, never force. CR branches and worktree branches stay local. `openbrain-client merge` does this push itself (requirement-39); push by hand only for commits made on main outside it.
-- **Every other outward-facing action needs the owner's OK every time.** That covers any other push (force pushes, other branches, other remotes, tags), GitHub releases, PyPI uploads, and upstream issues, PRs or comments (ulrichwi/pythermiagenesis17, CJNE/pythermiagenesis, pail23/stiebel_eltron_isg_component #684).
+- **Every other outward-facing action needs the owner's OK every time.** That covers any other push (force pushes, other branches, other remotes, tags), GitHub releases, and upstream issues, PRs or comments (ulrichwi/pythermiagenesis17, CJNE/pythermiagenesis, pail23/stiebel_eltron_isg_component #684).
 
 ### Access model
 
@@ -101,7 +101,7 @@ Pre-approved, either direction:
 
 Still needs the owner, whoever asked:
 
-- Anything outward-facing (see *Operational conventions*) beyond pushing `main` to `origin/master`: other pushes, releases, PyPI uploads, upstream issues and comments.
+- Anything outward-facing (see *Operational conventions*) beyond pushing `main` to `origin/master`: other pushes, releases, upstream issues and comments. PyPI uploads are not an option at all.
 - Any contact with the real heat pump, including FC1–4 fixture probes.
 - Weakening the write guard or the read-only default.
 - Product direction: a vision, a dd_plan, or a design_decision that reverses one the owner made. Facts about the owner's plant (what is installed) come from the owner; a position wpe-ha-1 relays is cited as relayed.
@@ -205,7 +205,7 @@ Cumulative by rung — each rung runs everything below it.
 | `integration` | `python -m pytest`, including the tests that start emulator instances and run full updates against every firmware profile | as `static`, plus the coverage check: `genesis_wp` line+branch ≥ 90 % |
 | `system` | as `integration`, plus an owner-approved, read-only (FC1–4) probe of the real heat pump compared with the current profile — never automated, never a write | as `integration` |
 
-- **Hosted CI is not a gate.** `.github/workflows/python-publish.yml` (inherited from upstream) builds and uploads to PyPI whenever a GitHub release is created. It runs no tests, and creating a release is outward-facing: owner's OK only. Every gate runs locally on the DEV VM.
+- **Hosted CI is not a gate.** `.github/workflows/python-publish.yml` (inherited from upstream) builds and uploads to PyPI whenever a GitHub release is created. It runs no tests and contradicts the no-PyPI rule, so it is to be removed by a change_request; never create a GitHub release while it is still in the tree. Creating a release is outward-facing: owner's OK only. Every gate runs locally on the DEV VM.
 - **The rungs are not substitutes for one another.** Never satisfy a rung with a lower rung's evidence.
 
 ### Reading a gate's result
