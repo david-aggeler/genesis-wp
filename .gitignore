@@ -148,3 +148,6 @@ init.log
 
 # Agent scratchpad (working files, survives sessions)
 scratchpad/
+
+# Version stamp written by the build (requirement-48)
+genesis_wp/_build_version.py

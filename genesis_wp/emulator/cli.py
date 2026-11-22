@@ -26,6 +26,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+from .._version import version
 from .capabilities import parse_selection
 from .climate import ClimateError, ClimateProfile
 from .control import ControlError, EmulatorControl
@@ -95,6 +96,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--ignore-writes", action="store_true", help="record writes but do not apply them")
     parser.add_argument("--list-profiles", action="store_true", help="list packaged profiles and exit")
+    parser.add_argument("--version", action="version", version=version(), help="print the genesis-wp version and exit")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="-v: requests, -vv: pymodbus debug")
     return parser
 

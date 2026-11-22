@@ -28,6 +28,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from .._version import version
+
 _LOGGER = logging.getLogger(__name__)
 
 FORMAT = "genesis-wp-climate/1"
@@ -189,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
         prog="genesis-wp-climate",
         description="Build a climate profile for the emulator from the Open-Meteo historical archive.",
     )
+    parser.add_argument("--version", action="version", version=version(), help="print the genesis-wp version and exit")
     commands = parser.add_subparsers(dest="command", required=True)
     b = commands.add_parser("build", help="fetch the archive and write a climate profile JSON")
     b.add_argument("--latitude", type=float, required=True)

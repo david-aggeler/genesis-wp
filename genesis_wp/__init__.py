@@ -26,6 +26,10 @@ from . import capabilities as _capabilities
 from .capabilities import ABSENT, PRESENT, UNKNOWN, Capability
 from .groups import register_category, register_concerns, register_group, register_role
 from .redaction import RedactionHandle, redact_transport_host
+from ._version import version as _installed_version
+
+#: MAJOR.MINOR.PATCH.BUILD, from the one version accessor (requirement-48).
+__version__ = _installed_version()
 
 _LOGGER = logging.getLogger(__name__)
 

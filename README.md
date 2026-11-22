@@ -238,6 +238,10 @@ The wire format is one JSON object per line, protocol version 1, described in `g
 
 New firmware: capture a read-only probe, then convert it with `scripts/probe_to_profile.py`.
 
+## Version
+
+The version is `MAJOR.MINOR.PATCH.BUILD`, for example `0.4.0.204`. `MAJOR.MINOR.PATCH` is the repo-root `VERSION` file; `BUILD` is the number of commits since the repository's first commit (`git rev-list --count HEAD`), never reset by a tag. A build stamps the value into the package, so `importlib.metadata.version("genesis-wp")`, `genesis_wp.__version__`, `genesis-wp-emulator --version` and `genesis-wp-climate --version` report the same string without git. Releases are annotated `vX.Y.Z` tags with a GitHub release on origin. Install a release with `pip install "git+https://github.com/david-aggeler/genesis-wp@v0.4.0"`; there is no package-index upload.
+
 ## Development
 
 ```sh
