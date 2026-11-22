@@ -45,15 +45,19 @@ git status --porcelain                      # must be empty
 git rev-parse --abbrev-ref HEAD             # must be main
 git rev-parse main origin/master            # must be equal
 git rev-parse --is-shallow-repository       # must be false (BUILD needs the full history)
+git worktree list                           # note any live cr-<n> runner; never release mid-drain
+gh release list --repo david-aggeler/genesis-wp --json tagName,isDraft   # no draft for the target tag
 ```
 
-Then run the package-index check of requirement-47 / ac-189. It must print nothing:
+The release prerequisites must have merged: change_request-70 (no upload path), change_request-71 (the version accessor) and change_request-72 (the pruning tool). Check that they are closed with close_reason merged.
+
+Then run the package-index check of requirement-47 / ac-189. It must print nothing. `tests/test_distribution.py` checks the same in the gate.
 
 ```zsh
 git grep -n -I -E 'twine upload|setup\.py upload|gh-action-pypi-publish|upload\.pypi\.org|test\.pypi\.org|PYPI_' -- . ':!.claude/skills/publish/SKILL.md'; git ls-files | rg -x '.*\.pypirc'
 ```
 
-A hit means a GitHub release could upload to PyPI, so stop. The inherited `.github/workflows/python-publish.yml` is the known case. It goes away through a change_request, never inside a release.
+A hit means a GitHub release could upload to a package index, so stop. change_request-70 removed the inherited upstream workflow; a new hit is a regression and goes through an issue, never a fix inside a release.
 
 ## Step 1: Determine the version
 
@@ -150,10 +154,15 @@ git show vX.Y.Z:VERSION                      # X.Y.Z
 Do these in order, and report anything partial.
 
 1. Set the release_notes record to `status: released`.
-2. Call `create_baseline` named `vX.Y.Z` and capture its ref.
-3. `admin_get_product_version` genesis-wp X.Y.Z. If the row exists, `admin_update_product_version`: keep its body and append `Git tag: vX.Y.Z (<SHA>)` and `SoR baseline: <ref>`. If it does not exist, create it first.
+2. Call `create_baseline` named `genesis-wp vX.Y.Z` and capture its ref. The product prefix keeps baseline names unique next to genesis-wp-ha's.
+3. `admin_get_product_version` genesis-wp X.Y.Z. If the row exists, `admin_update_product_version`:
+   - keep its body and append `Git tag: vX.Y.Z (<SHA>)`, `Build: X.Y.Z.<BUILD>` and `SoR baseline: <ref>`;
+   - set `release_notes` to the release_notes record link.
+
+   If the row does not exist, create it first. The admin tool cannot set the row's GitTag field, so the body line carries the tag (ac-197).
 4. `admin_advance_product_version_status` X.Y.Z → released.
-5. `admin_create_product_version` for the next version, X.Y.(Z+1) unless the owner named another, as in_development. Never rename a row (ac-197, keel issue-271).
+5. `admin_create_product_version` for the next version, X.Y.(Z+1) unless the owner named another, as in_development. Never rename a row (ac-197, keel issue-271). This step is explicit because advancing the status does not open the next row.
+6. Leave `VERSION` at X.Y.Z. The next release's Step 1.5 moves it to that release's core, as openbrain's publish skill does. Builds between releases therefore report X.Y.Z.<BUILD> with a growing BUILD.
 
 ## Step 7: Prune old GitHub releases
 
@@ -173,7 +182,16 @@ gh api --paginate repos/david-aggeler/genesis-wp/releases --jq '.[].tag_name'   
 gh release delete <tag> --yes --repo david-aggeler/genesis-wp                    # delete, keeps the tag; never --cleanup-tag
 ```
 
-Show the keep and prune sets first, as a dry run. Delete only the prune set. Compare `git ls-remote --tags origin` before and after; the two lists must be identical. Once a pruning script is committed through a change_request, use it here instead of the hand computation.
+Once change_request-72 has merged, use its tool, dry run first:
+
+```zsh
+python scripts/release_prune.py --dry-run     # prints the keep and prune sets
+python scripts/release_prune.py               # deletes the prune set
+```
+
+The bounds default to maxMinorLines 5, maxDeepLines 2 and maxPatches 5. A policy with maxDeepLines above maxMinorLines is rejected (ac-201).
+
+Before that tool exists, show the keep and prune sets by hand first, then delete only the prune set. Either way, compare `git ls-remote --tags origin` before and after; the two lists must be identical.
 
 ## Step 8: Notify
 
@@ -185,7 +203,7 @@ Show the keep and prune sets first, as a dry run. Delete only the prune set. Com
   full SHA: <git rev-parse vX.Y.Z^{commit}>
   ```
 
-  Add the Breaking changes and Upgrade & migration text, quoted. genesis-wp-ha's ac-5 pins a full commit, so the SHA is mandatory. The re-pin and the genesis-wp-ha release are wpe-ha-1's.
+  Add the Breaking changes and Upgrade & migration text, quoted. genesis-wp-ha's ac-5 pins a full commit, so the SHA is mandatory. The re-pin and the genesis-wp-ha release are wpe-ha-1's: its publish skill stops until it has this tag and SHA ("Library first"). The two skills keep the same step numbers.
 - **homelab-1:** a short note, "genesis-wp vX.Y.Z tag exists (<SHA>)".
 
 ## Step 9: Report
@@ -209,3 +227,4 @@ For a failure, name the step that failed and what is already live.
 - Skip or pipe the gate, or release from a dirty tree, a branch, a worktree or a shallow clone.
 - Force-push, move or delete a tag, upstream tags included.
 - Edit genesis-wp-ha files or pin on its behalf.
+- Touch the real heat pump. Releasing never needs the device.
