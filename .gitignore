@@ -142,7 +142,8 @@ init.log
 # Whole directories are ignored so new gold slugs are covered automatically.
 # A repo-owned skill or agent needs an explicit !exception here.
 .claude/materialization.json
-.claude/skills/
+.claude/skills/*
+!.claude/skills/publish/
 .claude/agents/
 
 # Agent scratchpad (working files, survives sessions)
