@@ -180,6 +180,7 @@ The rule covers the **repo working tree**: code, tests, fixtures, packaging, rep
 - **Agent instructions**: `CLAUDE.md` (and its `AGENTS.md` symlink) and local, non-materialized skills under `.claude/skills/`. Edit them directly, commit them on their own with a message that says what changed and why, and push main. Owner decision 2026-11-02.
 - **Catalog items.** Materialized skills, templates, methods, runbooks and executors are owned by OpenBrain. Fix them at the source.
 - **Local, gitignored state**, such as `openbrain-client.local.yaml` and `.logs/`.
+- **The release VERSION bump.** The publish skill (`.claude/skills/publish`) commits the one-line change of the repo-root `VERSION` file to the release core, together with the gold product_version bookkeeping, as release bookkeeping without its own change_request. That is what openbrain does. Owner decision 2026-11-22. Any other change to how the version is derived is a change_request.
 
 Workflow entry points: `/change-request` (manual, owner-driven), `/automated-change-request` and `/run-queue` (autonomous tail).
 
