@@ -13,12 +13,19 @@ grid, 7 complete cycles, read-only export):
   2408 rpm follows (likely oil return).
 - Input 54 = rpm / 72. Condenser pump 35 % up to 1600 rpm, 48 % at 2408 rpm, 0 while stopped.
 
-The input 30 law is a placeholder, not physics: as an integral of any set point error the
-series fits with R² <= 0.11. The phase law below reproduces the median run (189 min) and stop
-(127 min) at the series' 10-12 °C outdoor temperature. The plant modulates without stopping below
-about 9.7 °C, and this law always cycles. Hence opt-in (``Emulator(compressor_cycling=True)``).
-Cycling also enables the heating model's buffer heat balance and supply temperature response
-to compressor output and stops (requirement-20).
+The input 30 law and the gears above 3200 rpm come from the owner's HC1 room set point step of
+2026-11-22 and a week of recorder history (requirement-46 amendment 2026-11-22, issue-39). Let
+e = T33 (input 12) minus the HC1 supply set point (input 18). Each minute, input 30 moves one
+eighth of the way toward a target:
+
+- Running: 0.5 x e plus an accumulated term. The term grows by 0.0165 x e per minute at the
+  1400 rpm gear, outside the start and boost minutes, holds at other speeds and clears at each
+  start. That is the controller integrating only once it cannot step down any further.
+- Stopped: 1.1 x e.
+
+With the heating model's buffer heat balance, which cycling also enables (requirement-20), the
+compressor modulates without stopping in cold weather and cycles in mild weather, as the plant
+does. Cycling stays opt-in (``Emulator(compressor_cycling=True)``).
 """
 
 from __future__ import annotations
@@ -45,7 +52,7 @@ STATUS_RUNNING, STATUS_STOPPED = 8, 1024  # input 2 raw
 
 STOP_AT = 3.8
 START_AT = -3.9
-GEARS = (1400, 1600, 1800, 2000, 2400, 2700, 3200)  # [rpm]
+GEARS = (1400, 1600, 1800, 2000, 2400, 2700, 3200, 3600, 4150, 4800)  # [rpm]
 GEAR_BAND = 1.0
 GEAR_DWELL = 5  # [min]
 START_RPM = 2408
@@ -60,12 +67,11 @@ RPM_PER_PERCENT = 72.0
 PUMP_LOW, PUMP_HIGH = 35.0, 48.0  # [%]
 PUMP_LOW_RPM, PUMP_HIGH_RPM = 1600, 2408
 
-# Placeholder input 30 phase law (requirement-46).
-RUN_START = -1.6
-RUN_RATE = 0.0286  # per minute
-STOP_START = 2.3
-STOP_HOLD = 57  # [min]
-STOP_RATE = 0.089  # per minute
+# Input 30 law (requirement-46 amendment 2026-11-22, issue-39); e = T33 - input 18 [K].
+FILTER = 8  # input 30 closes 1/FILTER of the gap to its target each minute
+RUN_GAIN = 0.5  # per K, running (R² 0.96-0.97 over the 2 h 52 min after the HC1 step)
+STOP_GAIN = 1.1  # per K, stopped (starts at -3.9 with T33 about 3.5 K below input 18)
+LOW_GEAR_RATE = 0.0165  # per K per minute at the 1400 rpm gear (1738 ten-minute windows)
 
 
 def pump_percent(rpm: int) -> float:
@@ -97,9 +103,8 @@ class CompressorModel:
     below: int = 0
     boost_left: int = 0
     block: int = 0
-    #: Placeholder law rates, per minute; a test may set run_rate to 0 for a load that matches capacity.
-    run_rate: float = RUN_RATE
-    stop_rate: float = STOP_RATE
+    #: Input 30 accumulated at the 1400 rpm gear since the last start.
+    accumulated: float = 0.0
 
     @classmethod
     def from_values(cls, input_raw) -> CompressorModel:
@@ -108,7 +113,7 @@ class CompressorModel:
         integral = _signed(input_raw(INTEGRAL)) / 100
         if speed > 0:
             return cls(True, integral, minutes=OK_DELAY_MINUTES + 1, gear=_nearest_gear(speed))
-        return cls(False, integral, minutes=STOP_HOLD)
+        return cls(False, integral, minutes=1)
 
     @property
     def rpm(self) -> int:
@@ -125,14 +130,18 @@ class CompressorModel:
         """Input 1 raw: heat while running, no demand while stopped."""
         return DEMAND_HEAT if self.running else DEMAND_NONE
 
-    def step(self, cooling: bool = False) -> None:
-        """One simulated minute. Transitions use input 30 as last served, then the phase advances."""
+    def step(self, error: float = 0.0, cooling: bool = False) -> None:
+        """One simulated minute.
+
+        ``error`` is T33 minus the HC1 supply set point [K] as the last read showed it.
+        Transitions use input 30 as last served; otherwise input 30 moves toward its target.
+        """
         if cooling:
             if self.running:
                 _LOGGER.debug("compressor stopped: HC2 passively cools")
                 self._stop()
             else:
-                self._advance_block()
+                self._stop_minute(error)
             return
         if self.running and self.integral >= STOP_AT:
             _LOGGER.debug("compressor stop at input 30 = %.2f", self.integral)
@@ -141,13 +150,16 @@ class CompressorModel:
             _LOGGER.debug("compressor start at input 30 = %.2f", self.integral)
             self._start()
         elif self.running:
-            self._run_minute()
+            self._run_minute(error)
         else:
-            self._stop_minute()
+            self._stop_minute(error)
+
+    def _approach(self, target: float) -> None:
+        self.integral += (target - self.integral) / FILTER
 
     def _start(self) -> None:
         self.running = True
-        self.integral = RUN_START
+        self.accumulated = 0.0
         self.minutes = 1
         self.gear = 0
         self.since_gear_change = 0
@@ -157,22 +169,25 @@ class CompressorModel:
 
     def _stop(self) -> None:
         self.running = False
-        self.integral = STOP_START
         self.minutes = 1
         self.block = BLOCK_SECONDS
         self.boost_left = 0
 
-    def _run_minute(self) -> None:
+    def _run_minute(self, error: float) -> None:
         demand = self.integral  # the value the last read showed
         self.minutes += 1
         self.since_gear_change += 1
-        self.integral += self.run_rate
-        if self.minutes <= START_MINUTES:
-            return
-        if self.boost_left > 0:
-            self.boost_left -= 1
-            return
-        self._step_gear(demand)
+        if self.minutes > START_MINUTES:
+            if self.boost_left > 0:
+                self.boost_left -= 1
+            else:
+                self._step_gear(demand)
+                self._count_boost()
+                if self.gear == 0 and self.boost_left == 0:
+                    self.accumulated += LOW_GEAR_RATE * error
+        self._approach(RUN_GAIN * error + self.accumulated)
+
+    def _count_boost(self) -> None:
         if GEARS[self.gear] < BOOST_BELOW:
             self.below += 1
             if self.below >= BOOST_AFTER:
@@ -194,11 +209,10 @@ class CompressorModel:
         self.since_gear_change = 0
         _LOGGER.debug("compressor gear %d rpm at input 30 = %.2f", GEARS[self.gear], demand)
 
-    def _stop_minute(self) -> None:
+    def _stop_minute(self, error: float) -> None:
         self.minutes += 1
         self._advance_block()
-        if self.minutes > STOP_HOLD:
-            self.integral -= self.stop_rate
+        self._approach(STOP_GAIN * error)
 
     def _advance_block(self) -> None:
         self.block = max(self.block - 60, 0)
