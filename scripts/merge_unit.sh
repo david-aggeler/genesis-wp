@@ -9,7 +9,7 @@
 # that resolves to no single cr-<n> branch, nothing ahead of main, merge failure, a merge
 # commit whose subject or parents a hook changed. Branches are resolved by full refname, so
 # a tag named main or cr-<n> changes nothing. After a merge it pushes main to the branch main
-# tracks (origin master); a refusal pushes nothing.
+# tracks (origin main); a refusal pushes nothing.
 #
 # DHF-REQ: genesis-wp/requirement-34
 # DHF-REQ: genesis-wp/requirement-39
