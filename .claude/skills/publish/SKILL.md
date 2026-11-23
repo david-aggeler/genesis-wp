@@ -43,7 +43,7 @@ cd /container/genesis-wp && mkdir -p scratchpad
 git fetch origin --tags
 git status --porcelain                      # must be empty
 git rev-parse --abbrev-ref HEAD             # must be main
-git rev-parse main origin/master            # must be equal
+git rev-parse main origin/main              # must be equal
 git rev-parse --is-shallow-repository       # must be false (BUILD needs the full history)
 git worktree list                           # note any live cr-<n> runner; never release mid-drain
 gh release list --repo david-aggeler/genesis-wp --json tagName,isDraft   # no draft for the target tag
@@ -80,7 +80,7 @@ A hit means a GitHub release could upload to a package index, so stop. change_re
    - otherwise a patch bump.
 
    > Next version would be vX.Y.Z (N change_requests since <prev>). Use that?
-5. If `VERSION` differs from `X.Y.Z`, commit the one-line bump on main and push it (`git push origin main:master`). This is the publish skill's own bookkeeping commit, with no change_request (CLAUDE.md, *Change control*). Then restart at Step 0. VERSION is never bumped ahead of a publish: between releases it keeps the last released core.
+5. If `VERSION` differs from `X.Y.Z`, commit the one-line bump on main and push it (`git push`). This is the publish skill's own bookkeeping commit, with no change_request (CLAUDE.md, *Change control*). Then restart at Step 0. VERSION is never bumped ahead of a publish: between releases it keeps the last released core.
 6. Check the stamp (ac-191). After a fresh editable install it must print `X.Y.Z.<git rev-list --count HEAD>` twice:
 
    ```zsh
