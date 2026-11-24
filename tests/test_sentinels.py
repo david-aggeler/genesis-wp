@@ -75,3 +75,20 @@ def test_declarations_name_only_the_wpe_i_model():
     assert declared, "no sentinel declarations"
     for name, per_model in declared.items():
         assert set(per_model) == {MODEL_STIEBEL_WPE_I_071}, name
+
+
+# Measured correction (issue-2, owner-confirmed 2026-11-24): every read of the plant shows raw 0
+# on input 68 while the buffer moves, so 0 marks "not used".
+# DHF-REQ: genesis-wp/requirement-3  DHF-TEST: genesis-wp/ac-211
+@pytest.mark.parametrize("profile", [PROFILE_606, PROFILE_615])
+async def test_buffer_charge_set_point_zero_decodes_to_none(start_emulator, profile):
+    emu = await start_emulator(profile)
+    assert emu.profile.blocks["input_registers"].value(68) == 0
+    data = await update(emu, "input_buffer_tank_charge_set_point")
+    assert data["input_buffer_tank_charge_set_point"] is None
+
+
+async def test_buffer_charge_set_point_nonzero_keeps_its_value(start_emulator):
+    emu = await start_emulator(PROFILE_615, overrides={("input_registers", 68): 3000})
+    data = await update(emu, "input_buffer_tank_charge_set_point")
+    assert data["input_buffer_tank_charge_set_point"] == 30.0
