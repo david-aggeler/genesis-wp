@@ -445,3 +445,20 @@ def test_constructor_accepts_no_seed_and_a_seed_at_the_maximum():
     assert FlowEstimator(CONDENSER, calibration=None).calibration is None
     assert FlowEstimator(CONDENSER, max_flow=60.0, calibration=0.6).calibration == 0.6
     assert FlowEstimator(BRINE, calibration=1 / 4).calibration == 0.25  # an int-ratio seed is a float
+
+
+def window_starts(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records
+            if r.name == "genesis_wp.derived" and r.levelno == logging.DEBUG and "window started" in r.getMessage()]
+
+
+# DHF-TEST: genesis-wp/requirement-52 DHF-TEST: genesis-wp/ac-213
+def test_a_fresh_flow_window_logs_one_debug_record_when_it_starts_filling(caplog):
+    caplog.set_level(logging.DEBUG, logger="genesis_wp.derived")
+    estimator = FlowEstimator(CONDENSER)
+    estimator.add(0, STEADY)
+    estimator.add(30, STEADY)
+    starts = window_starts(caplog)
+    assert len(starts) == 1
+    assert "condenser" in starts[0]
+    assert re.search(r"\b300 s\b", starts[0]) and re.search(r"due at 300 s\b", starts[0])

@@ -192,6 +192,13 @@ def _difference(data: Mapping, plus: str, minus: str | None) -> float | None:
     return _finite(a - b)
 
 
+# DHF-REQ: genesis-wp/requirement-52
+def _log_window_start(name: str, timestamp: float, window_s: float) -> None:
+    """One DEBUG record when a valid sample enters an empty window: when the first windowed value is due."""
+    _LOGGER.debug("%s: window started at %.0f s, window_s %.0f s, first value due at %.0f s", name, timestamp,
+                  window_s, timestamp + window_s)
+
+
 # DHF-REQ: genesis-wp/requirement-31
 class FlowEstimator:
     """Windowed energy-balance flow estimate for one loop; feed it with :meth:`add`."""
@@ -296,6 +303,8 @@ class FlowEstimator:
             _LOGGER.debug("%s flow: window restarted after a %.0f s gap (maximum %.0f s)", self.loop.name,
                           sample.timestamp - self._window[-1].timestamp, self.max_gap_s)
             self._window.clear()
+        if not self._window:
+            _log_window_start(f"{self.loop.name} flow", sample.timestamp, self.window_s)
         self._window.append(sample)
         cutoff = sample.timestamp - self.window_s
         while len(self._window) > 1 and self._window[1].timestamp <= cutoff:
@@ -541,6 +550,8 @@ class HeatingCircuit2ReturnEstimator:
         """Keep an uninterrupted run of valid samples that just covers ``window_s``."""
         if self._window and sample.timestamp - self._window[-1].timestamp > self.max_gap_s:
             self._restart(f"{sample.timestamp - self._window[-1].timestamp:.0f} s gap above {self.max_gap_s:.0f} s")
+        if not self._window:
+            _log_window_start("hc2 return", sample.timestamp, self.window_s)
         self._window.append(sample)
         cutoff = sample.timestamp - self.window_s
         while len(self._window) > 1 and self._window[1].timestamp <= cutoff:
