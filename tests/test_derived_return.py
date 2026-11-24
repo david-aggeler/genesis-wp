@@ -5,8 +5,10 @@ Hermetic: the estimator takes update dicts and a condenser flow, and needs no de
 
 from __future__ import annotations
 
+import logging
 import math
 import random
+import re
 
 import pytest
 
@@ -261,3 +263,31 @@ def test_the_constructor_keeps_valid_constants_and_defaults():
     assert (est.buffer_volume, est.circuit_flow) == (VOLUME, CIRCUIT_FLOW)
     assert (est.window_s, est.edge_s, est.max_gap_s, est.fluid) == (1800.0, 180.0, 120.0, WATER)
     assert estimator(window_s=600, edge_s=60, max_gap_s=30).window_s == 600.0
+
+
+def window_starts(caplog) -> list[str]:
+    return [r.getMessage() for r in caplog.records
+            if r.name == "genesis_wp.derived" and r.levelno == logging.DEBUG and "window started" in r.getMessage()]
+
+
+# DHF-TEST: genesis-wp/requirement-52 DHF-TEST: genesis-wp/ac-212
+def test_a_fresh_return_window_logs_one_debug_record_when_it_starts_filling(caplog):
+    caplog.set_level(logging.DEBUG, logger="genesis_wp.derived")
+    est = estimator()
+    run(est, [BASE, BASE], every=30.0)
+    starts = window_starts(caplog)
+    assert len(starts) == 1
+    assert "hc2 return" in starts[0]
+    assert "window_s 1800 s" in starts[0] and re.search(r"due at 1800 s\b", starts[0])
+
+
+# DHF-TEST: genesis-wp/requirement-52 DHF-TEST: genesis-wp/ac-214
+def test_a_restarted_return_window_logs_a_new_window_start_record(caplog):
+    caplog.set_level(logging.DEBUG, logger="genesis_wp.derived")
+    est = estimator()
+    run(est, [BASE, BASE], every=30.0)
+    caplog.clear()
+    est.add(300.0, BASE, CONDENSER_FLOW)  # 270 s gap above max_gap_s 120 s
+    starts = window_starts(caplog)
+    assert len(starts) == 1
+    assert re.search(r"due at 2100 s\b", starts[0])
