@@ -30,7 +30,7 @@ The procedure carries user_need-6 and its requirements:
 | requirement-49 | what a release consists of |
 | requirement-50 | release retention |
 
-The skill installs nothing anywhere. genesis-wp-ha re-pins to the tag itself, and homelab owns rollout.
+The skill installs nothing anywhere. genesis-wp-ha re-pins itself, to the full commit SHA of the tag (never the tag name), and homelab owns rollout.
 
 **Outward-facing.** The tag push and the GitHub release need the owner's explicit "yes" in this chat, every time (Step 4). A peer session's relayed approval is not that "yes".
 
@@ -207,7 +207,7 @@ diff scratchpad/tags-before.txt scratchpad/tags-after.txt   # must print nothing
   full SHA: <git rev-parse vX.Y.Z^{commit}>
   ```
 
-  Add the Breaking changes and Upgrade & migration text, quoted. genesis-wp-ha's ac-5 pins a full commit, so the SHA is mandatory. The re-pin and the genesis-wp-ha release are wpe-ha-1's: its publish skill stops until it has this tag and SHA ("Library first"). The two skills keep the same step numbers.
+  Add the Breaking changes and Upgrade & migration text, quoted. genesis-wp-ha's ac-5 pins a full commit, so the SHA is mandatory: its manifest pip ref is always the full SHA, never the tag name, because Home Assistant installs from the manifest without a lockfile, and its release checks that the pinned SHA equals the commit of the released library tag (genesis-wp-ha requirement-33). So send the tag's commit, `vX.Y.Z^{commit}`, not the annotated tag object. The re-pin and the genesis-wp-ha release are wpe-ha-1's: its publish skill stops until it has this tag and SHA ("Library first"). The two skills keep the same step numbers.
 - **homelab-1:** a short note, "genesis-wp vX.Y.Z tag exists (<SHA>)".
 
 ## Step 9: Report
