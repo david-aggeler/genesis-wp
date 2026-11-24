@@ -50,6 +50,10 @@ NOT_FITTED_ON_UNIT = frozenset({
     "input_hgw_supply_line_temperature",
 })
 
+# Registers whose captured raw value is the declared "not used" value 0 (input 68, issue-2):
+# the capture decoded 0.0; the library now reports None.
+NOT_USED_ON_UNIT = frozenset({"input_buffer_tank_charge_set_point"})
+
 # Registers the register map declares valid only while a selector holds a documented value
 # (KEY_VALID_WHEN, requirement-29). The unit's selector reads otherwise (holding 117 = 0, the
 # PT1000 sensor), so the capture's 200.0 is no supplied value; the library now reports None.
@@ -86,6 +90,9 @@ def expected_library_values(profile: str) -> dict:
     expected = {name: value for name, value in raw.items() if value is not None}
     for name in NOT_FITTED_ON_UNIT:
         assert expected[name] == 200.0, f"{name}: capture no longer reads the sentinel"
+        expected[name] = None
+    for name in NOT_USED_ON_UNIT:
+        assert expected[name] == 0.0, f"{name}: capture no longer reads the not-used value"
         expected[name] = None
     for name in INVALID_ON_UNIT:
         assert expected[name] == 200.0, f"{name}: capture no longer reads the stale default"
